@@ -2,6 +2,7 @@ import type { ActionDef, GameAction, GameView, Player } from "../types";
 import {
   addLog,
   advanceTurn,
+  cleanText,
   cloneState,
   createCoreState,
   createDeck,
@@ -11,6 +12,7 @@ import {
   endGame,
   formatBlock,
   IllegalActionError,
+  isRecord,
   joinNames,
   nextPlayer,
   playerChoices,
@@ -150,14 +152,6 @@ const PHASES = {
 } as const;
 
 // ─── Options ────────────────────────────────────────────────────────────────
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function cleanText(value: unknown, limit: number): string {
-  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
-}
 
 /**
  * A complete rule table from untrusted overrides. Missing or blank fields

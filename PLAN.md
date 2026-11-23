@@ -110,9 +110,9 @@ interface GameSession {
 - Manual in Lumiverse: full Kings Cup game in one chat, swipe and delete mid-game, two chats with separate games, reload the app mid-game.
 - Before handoff: `bun run typecheck`, `bun test`, `bun run build`, `git diff --check`.
 
-## Status (0.2.0)
+## Status (0.3.0)
 
-Milestones 1–4 are implemented for Kings Cup. Decisions made along the way:
+Milestones 1–4 are implemented, and milestone 5 is done for Truth or Dare. Decisions made along the way:
 
 - **Storage:** one value under the `lumiverse_party_games` key in chat metadata, written with `chats.compareAndSetMetadata` (`expected_metadata` + `expected_last_message_id`, retried on conflict) and falling back to a read-merge-write through `chats.update` on hosts without `chat-conditional-metadata-v1`. Chat variables were not used: they share storage with macros and newer hosts track them per swipe.
 - **Anchoring:** each event stores its anchor (last message id + selected swipe) and its parent event. The head is the newest event whose anchor is live; state is setup + the head's ancestor chain. This keeps swipe branches, so swiping back restores state, and deleting an older message does not roll back later events. `chat.setSwipeVariables` was not needed.
@@ -123,11 +123,14 @@ Milestones 1–4 are implemented for Kings Cup. Decisions made along the way:
 - **Turn order:** "As listed" or "Random" at setup (seats shuffled once with the setup RNG, so it is part of the stored setup state). Mid-game, `set_direction` is a table action every game gets through `applyAction` in `src/engine/core.ts`; the panel shows it as a "Reverse turn order" toggle.
 - **Kings Cup card rules:** editable at setup (per game), savable as the user's default for new games (`defaults-kings_cup.json` in user storage), and editable mid-game through a `set_rules` action. Mid-game edits are events, so undo and swipes cover them. Kings always keep the King's Cup effect.
 
-Not yet done: Never Have I Ever and Truth or Dare (milestone 5), LLM tools (milestone 6), and manual testing in a live Lumiverse.
+- **Truth or Dare:** phases `choose` → `prompt` → `end_turn`. `choose` takes truth, dare, or random; random uses the event's seeded RNG, so it is reproducible and swipe-safe. That answers who decides for model-played characters: the user clicks Random. Prompts come from `src/data/truth-or-dare.json` (three tiers, stable ids) plus the user's own, are shuffled once at setup, and never repeat; `swap` skips one. `{other}` is filled with another active player picked when the prompt is drawn. Refusals are free, a named forfeit, or strikes with elimination (last player standing wins). Bundled prompts are kept PG-13 across tiers; anything stronger belongs in the user's own prompts.
+- **Frontend layout:** per-game setup panels live in `src/frontend-options.ts`; the DOM helper is `src/dom.ts`.
+
+Not yet done: Never Have I Ever (rest of milestone 5), adding prompts mid-game, LLM tools (milestone 6), and manual testing in a live Lumiverse.
 
 ## Open Questions
 
-- Who decides for model-played characters (Truth vs Dare, who an "8 Mate" or "2 You" targets): weighted RNG in the extension, the model via a tool/tag, or the user?
+- Who decides for model-played characters: for Truth vs Dare, the user clicks Random (extension RNG). Who an "8 Mate" or "2 You" targets is still the user's pick.
 - ~~Single chats with one character vs group chats~~: answered in 0.2.0; participants are entered by hand.
 - ~~Which Kings Cup house-rule set should be the default, and per chat or globally?~~: answered in 0.2.0; standard rules by default, editable per game, with a saved per-user default.
-- Content tiers for NHIE/ToD pools: what ships by default, and is intensity a per-game option?
+- ~~Content tiers for ToD pools~~: answered in 0.3.0; Mild/Bold/Wild, Mild and Bold on by default, chosen per game with a saved default. NHIE still to decide.

@@ -1,14 +1,14 @@
 import type { GameSummary } from "../types";
 import { kingsCup } from "../games/kings-cup";
+import { truthOrDare } from "../games/truth-or-dare";
 import type { AnyGameDefinition } from "./core";
 
 /** Every playable game. New games register here. */
-const GAMES: readonly AnyGameDefinition[] = [kingsCup];
+const GAMES: readonly AnyGameDefinition[] = [kingsCup, truthOrDare];
 
 /** Games on the roadmap, listed in setup so users know what is coming. */
 const PLANNED: readonly GameSummary[] = [
   { id: "never_have_i_ever", name: "Never Have I Ever", description: "Take turns confessing; lose a life for everything you have done.", minPlayers: 2, available: false },
-  { id: "truth_or_dare", name: "Truth or Dare", description: "Pick truth or dare and face a prompt from the pool.", minPlayers: 2, available: false },
 ];
 
 export function listGameDefinitions(): readonly AnyGameDefinition[] {

@@ -13,7 +13,8 @@ import {
   type RuleEdit,
   type SetupDraft,
 } from "./frontend-model";
-import { DEFAULT_RULES, EFFECT_LABELS, EFFECTS, RANKS } from "./games/kings-cup";
+import { el, type Child } from "./dom";
+import { renderGameOptions, renderRuleRows, type PanelKit } from "./frontend-options";
 import { partyStyles, STYLE_ID } from "./styles";
 import type {
   ActionDef,
@@ -38,29 +39,6 @@ const REFRESH_EVENTS = [
   "GENERATION_STOPPED",
 ];
 const MAX_PARTICIPANTS = 15;
-
-type Child = Node | string | null | undefined | false;
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Record<string, unknown> = {},
-  ...children: Child[]
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (value === undefined || value === null || value === false) continue;
-    if (key === "class") node.className = String(value);
-    else if (key === "text") node.textContent = String(value);
-    else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2), value as EventListener);
-    else if (key in node && typeof value !== "string") (node as unknown as Record<string, unknown>)[key] = value;
-    else node.setAttribute(key, value === true ? "" : String(value));
-  }
-  for (const child of children) {
-    if (child === null || child === undefined || child === false) continue;
-    node.append(child);
-  }
-  return node;
-}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -251,48 +229,6 @@ export function setup(ctx: SpindleFrontendContext): () => void {
     return details;
   }
 
-  /**
-   * Kings Cup card rule rows bound to `values` (edited in place). Kings stay
-   * "King's Cup"; every other card can take any of the other effects.
-   */
-  function renderRuleRows(values: Record<string, RuleEdit>): HTMLElement {
-    const list = el("div", { class: "pg-rules" });
-    for (const rank of RANKS) {
-      const entry = values[rank];
-      if (!entry) continue;
-      const title = el("input", { class: "pg-input", type: "text", value: entry.title, maxlength: "40", "aria-label": rank + " title" });
-      title.addEventListener("input", () => {
-        entry.title = title.value;
-      });
-      // Tall enough for the rule as written; the handle still allows resizing.
-      const rows = Math.min(5, Math.max(2, Math.ceil(entry.rule.length / 42)));
-      const rule = el("textarea", { class: "pg-input pg-textarea", maxlength: "300", rows: String(rows), "aria-label": rank + " rule" });
-      rule.value = entry.rule;
-      rule.addEventListener("input", () => {
-        entry.rule = rule.value;
-      });
-      let effect: HTMLElement;
-      if (rank === "K") {
-        effect = el("span", { class: "pg-rule-locked", text: EFFECT_LABELS.kings_cup });
-      } else {
-        const select = el("select", { class: "pg-select", "aria-label": rank + " effect" });
-        for (const option of EFFECTS) {
-          if (option === "kings_cup") continue;
-          select.append(el("option", { value: option, selected: entry.effect === option, text: EFFECT_LABELS[option] }));
-        }
-        select.title = "What drawing this card asks of the drawer";
-        select.addEventListener("change", () => {
-          entry.effect = select.value;
-        });
-        effect = select;
-      }
-      list.append(el("div", { class: "pg-rule" }, el("span", { class: "pg-rule-rank", text: rank }), title, effect, rule));
-    }
-    return list;
-  }
-
-
-
   function button(label: string, onClick: () => void, options: { primary?: boolean; danger?: boolean; small?: boolean; disabled?: boolean; title?: string } = {}): HTMLButtonElement {
     const classes = ["pg-button", options.primary ? "primary" : "", options.danger ? "danger" : "", options.small ? "small" : ""].filter(Boolean).join(" ");
     return el("button", { type: "button", class: classes, disabled: Boolean(options.disabled || busy), title: options.title, onclick: onClick, text: label });
@@ -387,38 +323,20 @@ export function setup(ctx: SpindleFrontendContext): () => void {
       draft.turnOrder = order.value === "random" ? "random" : "listed";
     });
 
-    const gameOptions: Child[] = [];
-    if (draft.gameId === "kings_cup") {
-      const fourthKing = el("input", { type: "checkbox", checked: draft.options.endOnFourthKing !== false });
-      fourthKing.addEventListener("change", () => {
-        draft.options.endOnFourthKing = fourthKing.checked;
-      });
-      const rules = (draft.options.rules ?? (draft.options.rules = structuredClone(DEFAULT_RULES))) as Record<string, RuleEdit>;
-      gameOptions.push(
-        el("section", { class: "pg-section" },
-          el("h3", { text: "House rules" }),
-          el("label", { class: "pg-check" }, fourthKing, el("span", { text: "The 4th King ends the game (otherwise play until the deck runs out)" })),
-        ),
-        collapsible("setup-rules", "Card rules",
-          el("p", { class: "pg-muted", text: "What each card means in this game. {drawer} is replaced with the drawing player's name." }),
-          renderRuleRows(rules),
-          el("div", { class: "pg-actions" },
-            button("Save as my default", () => {
-              void run("save-defaults", { gameId: draft.gameId, options: draft.options }).then((ok) => {
-                if (ok) {
-                  info = "Saved. New Kings Cup games start with these rules.";
-                  render();
-                }
-              });
-            }, { small: true }),
-            button("Reset to standard rules", () => {
-              draft.options.rules = structuredClone(DEFAULT_RULES);
-              render();
-            }, { small: true }),
-          ),
-        ),
-      );
-    }
+    const kit: PanelKit = {
+      button,
+      collapsible,
+      render,
+      saveDefaults: (gameId, gameName, options) => {
+        void run("save-defaults", { gameId, options }).then((ok) => {
+          if (ok) {
+            info = "Saved. New " + gameName + " games start with these settings.";
+            render();
+          }
+        });
+      },
+    };
+    const gameOptions = renderGameOptions(draft, kit);
 
     return [
       el("section", { class: "pg-section" }, el("h3", { text: "Pick a game" }), gameList),
@@ -435,7 +353,7 @@ export function setup(ctx: SpindleFrontendContext): () => void {
       ),
       ...gameOptions,
       el("div", { class: "pg-actions" }, startButton, problemText),
-    ].filter((node): node is HTMLElement => node !== null && node !== false);
+    ];
   }
 
   function renderField(field: ActionField, values: ActionValues): HTMLElement {
@@ -476,33 +394,52 @@ export function setup(ctx: SpindleFrontendContext): () => void {
   function renderActions(game: NonNullable<ChatGameState["game"]>): HTMLElement | null {
     if (!game.actions.length) return null;
     const section = el("section", { class: "pg-section", "aria-label": "Actions" });
+    const actionButton = (action: ActionDef, values: ActionValues, key: string) => {
+      // Choices re-render on change, so their buttons can disable; text is checked on click so typing keeps focus.
+      const missing = missingField(action, values);
+      const blocked = missing && missing.kind !== "text" ? missing : null;
+      return button(action.label, () => {
+        const unfilled = missingField(action, values);
+        if (unfilled) {
+          error = "Fill in “" + unfilled.label + "” first.";
+          render();
+          return;
+        }
+        void run("act", { action: buildAction(action, values) }).then((ok) => {
+          if (ok) actionValues.delete(key);
+        });
+      }, { primary: Boolean(action.primary), disabled: Boolean(blocked), title: blocked ? "Choose " + blocked.label.toLowerCase() + " first" : action.description });
+    };
+
+    // Actions that take input get their own block; the rest share one row of buttons.
+    const simple: ActionDef[] = [];
     for (const action of game.actions) {
       const key = game.sessionId + ":" + String(game.view.turnNumber) + ":" + game.view.phase + ":" + action.type + ":" + JSON.stringify(action.preset ?? {});
+      if (!action.fields?.length) {
+        simple.push(action);
+        continue;
+      }
       let values = actionValues.get(key);
       if (!values) {
         values = {};
         actionValues.set(key, values);
       }
-      const current = values;
-      // Choices re-render on change, so their buttons can disable; text is checked on click so typing keeps focus.
-      const missing = missingField(action, current);
-      const blocked = missing && missing.kind !== "text" ? missing : null;
       section.append(el("div", { class: "pg-action" },
         action.description ? el("p", { class: "pg-muted", text: action.description }) : null,
-        ...(action.fields ?? []).map((field) => renderField(field, current)),
-        el("div", { class: "pg-actions" },
-          button(action.label, () => {
-            const unfilled = missingField(action, current);
-            if (unfilled) {
-              error = "Fill in “" + unfilled.label + "” first.";
-              render();
-              return;
-            }
-            void run("act", { action: buildAction(action, current) }).then((ok) => {
-              if (ok) actionValues.delete(key);
-            });
-          }, { primary: Boolean(action.primary), disabled: Boolean(blocked), title: blocked ? "Choose " + blocked.label.toLowerCase() + " first" : undefined }),
-        ),
+        ...(action.fields ?? []).map((field) => renderField(field, values)),
+        el("div", { class: "pg-actions" }, actionButton(action, values, key)),
+      ));
+    }
+    if (simple.length) {
+      const notes = simple.filter((action) => action.description);
+      section.append(el("div", { class: "pg-action" },
+        el("div", { class: "pg-actions first" }, ...simple.map((action) => actionButton(action, {}, ""))),
+        notes.length
+          ? el("ul", { class: "pg-notes" }, ...notes.map((action) => el("li", {},
+            simple.length > 1 ? el("b", { text: action.label + ": " }) : null,
+            action.description ?? "",
+          )))
+          : null,
       ));
     }
     return section;

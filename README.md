@@ -2,7 +2,7 @@
 
 Play party games inside a Lumiverse chat. The extension deals the cards, tracks whose turn it is, and keeps score; the model only narrates what happened.
 
-**Available now:** Kings Cup. **Coming next:** Never Have I Ever, Truth or Dare.
+**Available now:** Kings Cup, Truth or Dare. **Coming next:** Never Have I Ever.
 
 ## How to play
 
@@ -40,6 +40,20 @@ These are the standard rules. Open **Card rules** to change any card's name, its
 - During a game, the same editor changes the rules from now on. The change is recorded like any action, so Undo and swipes cover it.
 
 The deck is shuffled once when the game starts and is drawn without replacement, so no card repeats. You can turn off "the 4th King ends the game" to play through the whole deck.
+
+## Truth or Dare
+
+On each turn the player picks **Truth**, **Dare**, or **Random** (the game picks for them, which is handy on characters' turns). The game draws a prompt from that pool, and the player either does it (**Answered** / **Did the dare**) or **Refuses**. **Draw a different one** skips a prompt that doesn't fit the scene. Prompts never repeat within a game, and the game ends when both pools run out.
+
+Setup options:
+
+- **Intensity:** Mild (friendly questions, silly stunts), Bold (embarrassing confessions, flirty dares), Wild (deep secrets, daring stunts). Mild and Bold are on by default.
+- **Refusing:** nothing happens, the player pays a forfeit you name (default "drinks"), or the player gets a strike and is out after a set number. With strikes, the last player standing wins.
+- **Your own truths and dares:** one per line; they are always included. `{player}` is whoever is taking the turn, and `{other}` is another player picked at random when the prompt is drawn.
+- **Bundled prompts:** untick any you never want to see.
+- **Save as my default** keeps these settings for new games.
+
+The model is told the exact prompt and is asked not to swap it for another.
 
 ## Swipes, deletes, and undo
 

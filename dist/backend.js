@@ -150,6 +150,9 @@ function findPlayer(state, id) {
 function playerName(state, id) {
   return id && findPlayer(state, id)?.name || "Unknown player";
 }
+function activePlayers(state) {
+  return state.players.filter((player) => player.active);
+}
 function playerChoices(players) {
   return players.map((player) => ({ id: player.id, label: player.name }));
 }
@@ -219,6 +222,11 @@ function turnOrderLine(state) {
   const names = playOrder(state).map((player) => player.name);
   const reversed = state.turn.direction === -1 ? " (reversed)" : "";
   return state.status === "active" ? "Turn order" + reversed + ", from the current player: " + names.join(" \u2192 ") + "." : "Players: " + state.players.map((player) => player.name).join(", ") + ".";
+}
+function eliminate(state, playerId) {
+  const player = state.players.find((entry) => entry.id === playerId);
+  if (player)
+    player.active = false;
 }
 function endGame(state, reason, winners = []) {
   state.status = "ended";
@@ -295,6 +303,12 @@ function drawFrom(deck) {
   deck.drawn.push(card);
   return card;
 }
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function cleanText(value, limit) {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
+}
 var STANDING_INSTRUCTION = "This block is the authoritative game state, maintained by the game. Narrate only what it says. " + "Do not draw cards, pick prompts, change whose turn it is, eliminate players, or move the game to a new phase yourself; " + "the game advances only when the players use the game controls. If an action is still pending, describe the moment and leave it pending.";
 function joinNames(names) {
   if (names.length <= 1)
@@ -348,12 +362,6 @@ var PHASES = {
   end_turn: "end of turn",
   game_over: "game over"
 };
-function isRecord(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-function cleanText(value, limit) {
-  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
-}
 function normalizeRules(raw, baseTable = DEFAULT_RULES) {
   const source = isRecord(raw) ? raw : {};
   const table = {};
@@ -706,12 +714,873 @@ var kingsCup = {
   promptBlock,
   view
 };
+// src/data/truth-or-dare.json
+var truth_or_dare_default = {
+  _comment: "Bundled Truth or Dare prompts. Ids are stored in user settings to disable entries: never reuse or renumber an id; append new ones.",
+  truths: [
+    {
+      id: "t-mild-01",
+      tier: "mild",
+      text: "What is a habit of yours you would never admit to in public?"
+    },
+    {
+      id: "t-mild-02",
+      tier: "mild",
+      text: "What is the silliest thing you have ever been afraid of?"
+    },
+    {
+      id: "t-mild-03",
+      tier: "mild",
+      text: "What is the worst gift you have ever received, and what did you say when you opened it?"
+    },
+    {
+      id: "t-mild-04",
+      tier: "mild",
+      text: "Who here would you want beside you in a crisis, and why?"
+    },
+    {
+      id: "t-mild-05",
+      tier: "mild",
+      text: "What is something you pretend to understand but don't?"
+    },
+    {
+      id: "t-mild-06",
+      tier: "mild",
+      text: "What is the most childish thing you still do?"
+    },
+    {
+      id: "t-mild-07",
+      tier: "mild",
+      text: "If you could swap lives with {other} for a day, what would you do first?"
+    },
+    {
+      id: "t-mild-08",
+      tier: "mild",
+      text: "What was the last lie you told?"
+    },
+    {
+      id: "t-mild-09",
+      tier: "mild",
+      text: "What is your most irrational pet peeve?"
+    },
+    {
+      id: "t-mild-10",
+      tier: "mild",
+      text: "What talent do you secretly wish you had?"
+    },
+    {
+      id: "t-mild-11",
+      tier: "mild",
+      text: "What is the strangest dream you remember?"
+    },
+    {
+      id: "t-mild-12",
+      tier: "mild",
+      text: "Who here would survive longest in the wilderness, and who would go first?"
+    },
+    {
+      id: "t-mild-13",
+      tier: "mild",
+      text: "What food do you claim to like but actually can't stand?"
+    },
+    {
+      id: "t-mild-14",
+      tier: "mild",
+      text: "What is the most trouble you ever got into as a child?"
+    },
+    {
+      id: "t-mild-15",
+      tier: "mild",
+      text: "What is one thing you would change about yourself if you could?"
+    },
+    {
+      id: "t-bold-01",
+      tier: "bold",
+      text: "Who here would you most want to be stuck somewhere alone with for a night?"
+    },
+    {
+      id: "t-bold-02",
+      tier: "bold",
+      text: "What is the most embarrassing thing you have done to impress someone?"
+    },
+    {
+      id: "t-bold-03",
+      tier: "bold",
+      text: "What was your honest first impression of {other}?"
+    },
+    {
+      id: "t-bold-04",
+      tier: "bold",
+      text: "What is the most awkward first meeting you have ever had with someone you liked?"
+    },
+    {
+      id: "t-bold-05",
+      tier: "bold",
+      text: "Have you ever had a crush on someone you shouldn't have? Who?"
+    },
+    {
+      id: "t-bold-06",
+      tier: "bold",
+      text: "What is something you have never told anyone here?"
+    },
+    {
+      id: "t-bold-07",
+      tier: "bold",
+      text: "What is the pettiest revenge you have ever taken?"
+    },
+    {
+      id: "t-bold-08",
+      tier: "bold",
+      text: "Who here do you think has a secret crush, and on whom?"
+    },
+    {
+      id: "t-bold-09",
+      tier: "bold",
+      text: "What is the worst thing you have done and gotten away with?"
+    },
+    {
+      id: "t-bold-10",
+      tier: "bold",
+      text: "What is the most jealous you have ever been?"
+    },
+    {
+      id: "t-bold-11",
+      tier: "bold",
+      text: "Rank everyone here by how good a kisser you think they are."
+    },
+    {
+      id: "t-bold-12",
+      tier: "bold",
+      text: "What is a rumor about you that is actually true?"
+    },
+    {
+      id: "t-bold-13",
+      tier: "bold",
+      text: "What is the boldest line anyone has ever used on you, or you on them?"
+    },
+    {
+      id: "t-bold-14",
+      tier: "bold",
+      text: "Who here would you trust least with a secret?"
+    },
+    {
+      id: "t-bold-15",
+      tier: "bold",
+      text: "What is the most embarrassing thing you own?"
+    },
+    {
+      id: "t-wild-01",
+      tier: "wild",
+      text: "What is the biggest secret you are keeping right now?"
+    },
+    {
+      id: "t-wild-02",
+      tier: "wild",
+      text: "What is the worst thing you have ever said about someone here behind their back?"
+    },
+    {
+      id: "t-wild-03",
+      tier: "wild",
+      text: "What have you done that you would never want your family to find out about?"
+    },
+    {
+      id: "t-wild-04",
+      tier: "wild",
+      text: "If you had to court someone here, who would it be and why?"
+    },
+    {
+      id: "t-wild-05",
+      tier: "wild",
+      text: "What is the most reckless thing you have ever done?"
+    },
+    {
+      id: "t-wild-06",
+      tier: "wild",
+      text: "What is one thing about {other} that annoys you more than it should?"
+    },
+    {
+      id: "t-wild-07",
+      tier: "wild",
+      text: "What is the biggest lie you have ever told someone here?"
+    },
+    {
+      id: "t-wild-08",
+      tier: "wild",
+      text: "What is your deepest regret?"
+    },
+    {
+      id: "t-wild-09",
+      tier: "wild",
+      text: "Who here would you least want to be left alone with, and why?"
+    },
+    {
+      id: "t-wild-10",
+      tier: "wild",
+      text: "What is something you are genuinely ashamed of?"
+    },
+    {
+      id: "t-wild-11",
+      tier: "wild",
+      text: "What do you really think of {other}? Be completely honest."
+    },
+    {
+      id: "t-wild-12",
+      tier: "wild",
+      text: "Have you ever betrayed a friend's trust? What happened?"
+    },
+    {
+      id: "t-wild-13",
+      tier: "wild",
+      text: "What is a desire you have never said out loud?"
+    },
+    {
+      id: "t-wild-14",
+      tier: "wild",
+      text: "What is the most scandalous thing you have witnessed and kept quiet about?"
+    }
+  ],
+  dares: [
+    {
+      id: "d-mild-01",
+      tier: "mild",
+      text: "Do your best impression of {other} until someone guesses who it is."
+    },
+    {
+      id: "d-mild-02",
+      tier: "mild",
+      text: "Speak only in rhymes until your next turn."
+    },
+    {
+      id: "d-mild-03",
+      tier: "mild",
+      text: "Let {other} give you a nickname that everyone must use for the rest of the game."
+    },
+    {
+      id: "d-mild-04",
+      tier: "mild",
+      text: "Tell a joke. If nobody laughs, tell another."
+    },
+    {
+      id: "d-mild-05",
+      tier: "mild",
+      text: "Sing the chorus of a song {other} chooses."
+    },
+    {
+      id: "d-mild-06",
+      tier: "mild",
+      text: "Talk in an over-the-top accent until your next turn."
+    },
+    {
+      id: "d-mild-07",
+      tier: "mild",
+      text: "Give everyone here a sincere compliment."
+    },
+    {
+      id: "d-mild-08",
+      tier: "mild",
+      text: "Act out a famous scene from a story without words until someone guesses it."
+    },
+    {
+      id: "d-mild-09",
+      tier: "mild",
+      text: "Do ten jumping jacks while reciting the alphabet."
+    },
+    {
+      id: "d-mild-10",
+      tier: "mild",
+      text: "Balance something on your head until your next turn."
+    },
+    {
+      id: "d-mild-11",
+      tier: "mild",
+      text: "Narrate everything you do in the third person until your next turn."
+    },
+    {
+      id: "d-mild-12",
+      tier: "mild",
+      text: "Let {other} style your hair however they like."
+    },
+    {
+      id: "d-mild-13",
+      tier: "mild",
+      text: "Make up a short poem about {other} on the spot."
+    },
+    {
+      id: "d-mild-14",
+      tier: "mild",
+      text: "Perform your most dramatic slow-motion fall."
+    },
+    {
+      id: "d-mild-15",
+      tier: "mild",
+      text: "Hold a staring contest with {other}. Whoever blinks first does a forfeit of the winner's choosing."
+    },
+    {
+      id: "d-bold-01",
+      tier: "bold",
+      text: "Serenade {other} with a love song of your choice."
+    },
+    {
+      id: "d-bold-02",
+      tier: "bold",
+      text: "Give {other} your most convincing romantic line."
+    },
+    {
+      id: "d-bold-03",
+      tier: "bold",
+      text: "Swap an item of clothing with {other} until your next turn."
+    },
+    {
+      id: "d-bold-04",
+      tier: "bold",
+      text: "Let {other} draw something on your arm or face."
+    },
+    {
+      id: "d-bold-05",
+      tier: "bold",
+      text: "Confess something embarrassing to the whole group in a dramatic voice."
+    },
+    {
+      id: "d-bold-06",
+      tier: "bold",
+      text: "Dance with {other} until your next turn."
+    },
+    {
+      id: "d-bold-07",
+      tier: "bold",
+      text: "Describe {other} as if you were writing a glowing personal ad for them."
+    },
+    {
+      id: "d-bold-08",
+      tier: "bold",
+      text: "Do your best runway walk across the room."
+    },
+    {
+      id: "d-bold-09",
+      tier: "bold",
+      text: "Let the group pick a word you must work into everything you say until your next turn."
+    },
+    {
+      id: "d-bold-10",
+      tier: "bold",
+      text: "Act out how you would propose to {other}."
+    },
+    {
+      id: "d-bold-11",
+      tier: "bold",
+      text: "Give {other} a shoulder rub for one minute."
+    },
+    {
+      id: "d-bold-12",
+      tier: "bold",
+      text: "Imitate how you think {other} flirts."
+    },
+    {
+      id: "d-bold-13",
+      tier: "bold",
+      text: "Let {other} choose a ridiculous pose you must hold for a full minute."
+    },
+    {
+      id: "d-bold-14",
+      tier: "bold",
+      text: "Tell {other} three things you genuinely admire about them while looking them in the eye."
+    },
+    {
+      id: "d-wild-01",
+      tier: "wild",
+      text: "Let {other} ask you any question; you must answer truthfully."
+    },
+    {
+      id: "d-wild-02",
+      tier: "wild",
+      text: "Kiss {other} on the cheek."
+    },
+    {
+      id: "d-wild-03",
+      tier: "wild",
+      text: "Let the group invent a dare for you on the spot."
+    },
+    {
+      id: "d-wild-04",
+      tier: "wild",
+      text: "Sit on {other}'s lap until your next turn."
+    },
+    {
+      id: "d-wild-05",
+      tier: "wild",
+      text: "Whisper something in {other}'s ear that makes them blush."
+    },
+    {
+      id: "d-wild-06",
+      tier: "wild",
+      text: "Slow dance with {other}, with no music."
+    },
+    {
+      id: "d-wild-07",
+      tier: "wild",
+      text: "Trade seats with {other} and imitate them until your next turn."
+    },
+    {
+      id: "d-wild-08",
+      tier: "wild",
+      text: "Eat or drink something the group mixes together for you."
+    },
+    {
+      id: "d-wild-09",
+      tier: "wild",
+      text: "Hold hands with {other} until your next turn."
+    },
+    {
+      id: "d-wild-10",
+      tier: "wild",
+      text: "Go somewhere you will be overheard and loudly declare your admiration for {other}."
+    },
+    {
+      id: "d-wild-11",
+      tier: "wild",
+      text: "Make a dramatic declaration of love to an object in the room."
+    },
+    {
+      id: "d-wild-12",
+      tier: "wild",
+      text: "Let {other} tickle you for thirty seconds without laughing."
+    },
+    {
+      id: "d-wild-13",
+      tier: "wild",
+      text: "Reveal the most embarrassing nickname you have ever had and let everyone use it until your next turn."
+    },
+    {
+      id: "d-wild-14",
+      tier: "wild",
+      text: "Describe your ideal evening with {other}, in detail."
+    }
+  ]
+};
+
+// src/games/truth-or-dare.ts
+var TIERS = ["mild", "bold", "wild"];
+var TIER_LABELS = {
+  mild: { label: "Mild", description: "Friendly questions and silly stunts" },
+  bold: { label: "Bold", description: "Embarrassing confessions and flirty dares" },
+  wild: { label: "Wild", description: "Deep secrets and daring stunts" }
+};
+function bundledList(value) {
+  if (!Array.isArray(value))
+    return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.text !== "string")
+      return [];
+    if (!TIERS.includes(entry.tier))
+      return [];
+    return [{ id: entry.id, tier: entry.tier, text: entry.text }];
+  });
+}
+var BUNDLED_TRUTHS = bundledList(truth_or_dare_default.truths);
+var BUNDLED_DARES = bundledList(truth_or_dare_default.dares);
+var BUNDLED_IDS = new Set([...BUNDLED_TRUTHS, ...BUNDLED_DARES].map((prompt) => prompt.id));
+var MAX_CUSTOM_PROMPTS = 100;
+var MAX_PROMPT_TEXT = 200;
+var MAX_FORFEIT_TEXT = 80;
+var MAX_STRIKE_LIMIT = 9;
+var REFUSAL_RULES = ["free", "forfeit", "strikes"];
+function cleanList(value) {
+  if (!Array.isArray(value))
+    return [];
+  const seen = new Set;
+  const result = [];
+  for (const entry of value) {
+    const text = cleanText(entry, MAX_PROMPT_TEXT);
+    if (!text || seen.has(text.toLowerCase()))
+      continue;
+    seen.add(text.toLowerCase());
+    result.push(text);
+    if (result.length >= MAX_CUSTOM_PROMPTS)
+      break;
+  }
+  return result;
+}
+function defaultOptions2() {
+  return {
+    tiers: ["mild", "bold"],
+    refusals: "forfeit",
+    forfeit: "drinks",
+    strikeLimit: 3,
+    customTruths: [],
+    customDares: [],
+    disabled: []
+  };
+}
+function normalizeOptions2(raw) {
+  const source = isRecord(raw) ? raw : {};
+  const base = defaultOptions2();
+  const limit = Number(source.strikeLimit);
+  return {
+    tiers: Array.isArray(source.tiers) ? TIERS.filter((tier) => source.tiers.includes(tier)) : base.tiers,
+    refusals: REFUSAL_RULES.includes(source.refusals) ? source.refusals : base.refusals,
+    forfeit: cleanText(source.forfeit, MAX_FORFEIT_TEXT).replace(/[.!]+$/, "") || base.forfeit,
+    strikeLimit: Number.isInteger(limit) ? Math.min(MAX_STRIKE_LIMIT, Math.max(1, limit)) : base.strikeLimit,
+    customTruths: cleanList(source.customTruths),
+    customDares: cleanList(source.customDares),
+    disabled: Array.isArray(source.disabled) ? [...new Set(source.disabled.filter((id) => typeof id === "string" && BUNDLED_IDS.has(id)))] : []
+  };
+}
+function promptPool(options, kind) {
+  const source = kind === "truth" ? BUNDLED_TRUTHS : BUNDLED_DARES;
+  const custom = kind === "truth" ? options.customTruths : options.customDares;
+  const disabled = new Set(options.disabled);
+  return [
+    ...source.filter((prompt) => options.tiers.includes(prompt.tier) && !disabled.has(prompt.id)).map((prompt) => ({ ...prompt })),
+    ...custom.map((text, index) => ({ id: (kind === "truth" ? "ct-" : "cd-") + String(index + 1), text, custom: true }))
+  ];
+}
+var PHASES2 = {
+  choose: "choose",
+  prompt: "prompt",
+  end_turn: "end of turn",
+  game_over: "game over"
+};
+function deckFor(state, kind) {
+  return kind === "truth" ? state.truths : state.dares;
+}
+function availableKinds(state) {
+  return ["truth", "dare"].filter((kind) => deckFor(state, kind).remaining.length > 0);
+}
+function promptText(state, current) {
+  return current.prompt.text.split("{player}").join(playerName(state, current.player)).split("{other}").join(current.other ? playerName(state, current.other) : "another player");
+}
+function pickOther(state, playerId, text, rng) {
+  if (!text.includes("{other}"))
+    return null;
+  const others = activePlayers(state).filter((player) => player.id !== playerId);
+  return others.length ? others[randomInt(rng, others.length)].id : null;
+}
+function tallyFor(state, playerId) {
+  return state.tally[playerId] ??= { truths: 0, dares: 0, refused: 0 };
+}
+function refusalRule(state) {
+  switch (state.refusals) {
+    case "free":
+      return "Players may refuse with no penalty.";
+    case "forfeit":
+      return "A player who refuses " + state.forfeit + ".";
+    default:
+      return "Each refusal is a strike; " + String(state.strikeLimit) + " strike" + (state.strikeLimit === 1 ? "" : "s") + " and a player is out.";
+  }
+}
+function describeOutcome(state, current) {
+  const name = playerName(state, current.player);
+  if (current.outcome === "done")
+    return current.kind === "truth" ? name + " answered the truth." : name + " did the dare.";
+  if (current.outcome === "pending")
+    return "";
+  if (state.refusals === "forfeit")
+    return name + " refused the " + current.kind + " and " + state.forfeit + ".";
+  if (state.refusals === "strikes") {
+    const strikes = state.strikes[current.player] ?? 0;
+    const out = strikes >= state.strikeLimit ? " " + name + " is out." : "";
+    return name + " refused the " + current.kind + ": strike " + String(strikes) + " of " + String(state.strikeLimit) + "." + out;
+  }
+  return name + " refused the " + current.kind + ".";
+}
+function strikesLine(state) {
+  if (state.refusals !== "strikes")
+    return "";
+  const entries = state.players.filter((player) => player.active && (state.strikes[player.id] ?? 0) > 0).map((player) => player.name + " " + String(state.strikes[player.id]) + "/" + String(state.strikeLimit));
+  return entries.length ? "Strikes: " + entries.join(", ") + "." : "";
+}
+function promptsLeft(state) {
+  const truths = state.truths.remaining.length;
+  const dares = state.dares.remaining.length;
+  return String(truths) + " truth" + (truths === 1 ? "" : "s") + ", " + String(dares) + " dare" + (dares === 1 ? "" : "s");
+}
+function setup2(players, options, rng) {
+  const truths = promptPool(options, "truth");
+  const dares = promptPool(options, "dare");
+  if (!truths.length && !dares.length) {
+    throw new IllegalActionError("There are no prompts to play with. Turn on an intensity or add your own truths and dares.");
+  }
+  return {
+    ...createCoreState(players, "choose", 2),
+    game: "truth_or_dare",
+    truths: createDeck(truths, rng),
+    dares: createDeck(dares, rng),
+    tiers: [...options.tiers],
+    refusals: options.refusals,
+    forfeit: options.forfeit,
+    strikeLimit: options.strikeLimit,
+    strikes: {},
+    tally: {},
+    current: null,
+    previous: null
+  };
+}
+function legalActions2(state) {
+  if (state.status !== "active")
+    return [];
+  const player = currentPlayer(state);
+  switch (state.phase) {
+    case "choose": {
+      const kinds = availableKinds(state);
+      const actions = [];
+      if (kinds.includes("truth"))
+        actions.push({ type: "choose", label: "Truth", preset: { choice: "truth" } });
+      if (kinds.includes("dare"))
+        actions.push({ type: "choose", label: "Dare", preset: { choice: "dare" } });
+      if (kinds.length) {
+        actions.push({
+          type: "choose",
+          label: "Random",
+          description: "Let the game pick truth or dare for " + player.name + ".",
+          primary: true,
+          preset: { choice: "random" }
+        });
+      }
+      return actions;
+    }
+    case "prompt": {
+      const current = state.current;
+      if (!current)
+        return [];
+      const strike = (state.strikes[player.id] ?? 0) + 1;
+      const refuseNote = state.refusals === "free" ? "Refusing has no penalty." : state.refusals === "forfeit" ? "If " + player.name + " refuses, " + player.name + " " + state.forfeit + "." : "If " + player.name + " refuses, that is strike " + String(strike) + " of " + String(state.strikeLimit) + (strike >= state.strikeLimit ? " and " + player.name + " is out." : ".");
+      const actions = [
+        { type: "perform", label: current.kind === "truth" ? "Answered" : "Did the dare", primary: true },
+        { type: "refuse", label: "Refuse", description: refuseNote }
+      ];
+      if (deckFor(state, current.kind).remaining.length) {
+        actions.push({ type: "swap", label: "Draw a different " + current.kind, description: "Skip this one; it will not come up again." });
+      }
+      return actions;
+    }
+    case "end_turn": {
+      const next = nextPlayer(state);
+      const description = availableKinds(state).length === 0 ? "Out of prompts; this ends the game." : next ? "Pass to " + next.name + "." : undefined;
+      return [{ type: "end_turn", label: "Next turn", primary: true, ...description ? { description } : {} }];
+    }
+    default:
+      return [];
+  }
+}
+function drawPrompt(state, kind, playerId, random, rng) {
+  const prompt = drawFrom(deckFor(state, kind));
+  return { kind, prompt, player: playerId, other: pickOther(state, playerId, prompt.text, rng), random, outcome: "pending" };
+}
+function apply2(input, action, rng) {
+  const state = cloneState(input);
+  switch (action.type) {
+    case "choose": {
+      requirePhase(state, PHASES2, ["choose"], action);
+      const actor = requireCurrentActor(state, action);
+      const kinds = availableKinds(state);
+      let kind;
+      if (action.choice === "random") {
+        if (!kinds.length)
+          throw new IllegalActionError("There are no prompts left.");
+        kind = kinds[randomInt(rng, kinds.length)];
+      } else if (action.choice === "truth" || action.choice === "dare") {
+        kind = action.choice;
+        if (!kinds.includes(kind))
+          throw new IllegalActionError("There are no " + kind + "s left. Pick " + (kind === "truth" ? "dare" : "truth") + ".");
+      } else {
+        throw new IllegalActionError("Pick truth, dare, or random.");
+      }
+      const random = action.choice === "random";
+      state.current = drawPrompt(state, kind, actor.id, random, rng);
+      const tally = tallyFor(state, actor.id);
+      if (kind === "truth")
+        tally.truths += 1;
+      else
+        tally.dares += 1;
+      addLog(state, actor.name + " picked " + kind + (random ? " (at random)" : "") + ': "' + promptText(state, state.current) + '"');
+      state.phase = "prompt";
+      return state;
+    }
+    case "perform":
+    case "refuse": {
+      requirePhase(state, PHASES2, ["prompt"], action);
+      const actor = requireCurrentActor(state, action);
+      const current = state.current;
+      if (!current)
+        throw new IllegalActionError("No prompt has been drawn this turn.");
+      if (action.type === "perform") {
+        current.outcome = "done";
+      } else {
+        current.outcome = "refused";
+        tallyFor(state, actor.id).refused += 1;
+        if (state.refusals === "strikes")
+          state.strikes[actor.id] = (state.strikes[actor.id] ?? 0) + 1;
+      }
+      addLog(state, describeOutcome(state, current));
+      if (state.refusals === "strikes" && (state.strikes[actor.id] ?? 0) >= state.strikeLimit) {
+        eliminate(state, actor.id);
+        const remaining = activePlayers(state);
+        if (remaining.length <= 1) {
+          const winner = remaining[0];
+          const reason = winner ? winner.name + " is the last player standing." : "Everyone is out.";
+          addLog(state, reason);
+          endGame(state, reason, winner ? [winner.id] : []);
+          return state;
+        }
+      }
+      state.phase = "end_turn";
+      return state;
+    }
+    case "swap": {
+      requirePhase(state, PHASES2, ["prompt"], action);
+      const actor = requireCurrentActor(state, action);
+      const current = state.current;
+      if (!current)
+        throw new IllegalActionError("No prompt has been drawn this turn.");
+      if (!deckFor(state, current.kind).remaining.length)
+        throw new IllegalActionError("There are no other " + current.kind + "s left.");
+      state.current = drawPrompt(state, current.kind, actor.id, current.random, rng);
+      addLog(state, actor.name + " skipped that " + current.kind + ' and drew another: "' + promptText(state, state.current) + '"');
+      return state;
+    }
+    case "end_turn": {
+      requirePhase(state, PHASES2, ["end_turn"], action);
+      requireCurrentActor(state, action);
+      state.previous = state.current;
+      state.current = null;
+      if (!availableKinds(state).length) {
+        const reason = "Out of prompts after " + String(state.turn.number) + " turns.";
+        addLog(state, reason);
+        endGame(state, reason);
+        return state;
+      }
+      advanceTurn(state, "choose");
+      return state;
+    }
+    default:
+      return unknownAction(state, PHASES2, action);
+  }
+}
+function promptBlock2(state) {
+  const lines = [turnOrderLine(state)];
+  if (state.status === "ended") {
+    lines.push("Game over: " + (state.endReason ?? "the game has ended.") + " No more prompts are drawn.");
+  } else {
+    const player = currentPlayer(state);
+    lines.push("It is " + player.name + "'s turn.");
+    const current = state.current;
+    if (state.phase === "choose" || !current) {
+      lines.push(player.name + " has not picked truth or dare yet.");
+      if (state.previous) {
+        lines.push("Last turn: " + playerName(state, state.previous.player) + "'s " + state.previous.kind + ' was "' + promptText(state, state.previous) + '". ' + describeOutcome(state, state.previous));
+      }
+    } else {
+      lines.push(player.name + " picked " + current.kind + (current.random ? " (chosen at random by the game)" : "") + ".");
+      lines.push(player.name + "'s " + current.kind + ': "' + promptText(state, current) + '"');
+      if (state.phase === "prompt") {
+        lines.push(current.kind === "truth" ? "Waiting for " + player.name + " to answer or refuse. Use this exact question; do not replace it." : "Waiting for " + player.name + " to do it or refuse. Use this exact dare; do not replace it.");
+      } else {
+        lines.push("Resolved: " + describeOutcome(state, current) + " " + player.name + "'s turn is wrapping up.");
+      }
+    }
+  }
+  lines.push("Refusal rule: " + refusalRule(state));
+  const strikes = strikesLine(state);
+  if (strikes)
+    lines.push(strikes);
+  const out = state.players.filter((player) => !player.active).map((player) => player.name);
+  if (out.length)
+    lines.push("Out of the game: " + joinNames(out) + ".");
+  lines.push("Prompts left: " + promptsLeft(state) + ".");
+  const next = nextPlayer(state);
+  if (next && state.status === "active")
+    lines.push("Next up: " + next.name + ".");
+  return formatBlock("Truth or Dare \u2014 turn " + String(state.turn.number), lines);
+}
+function view2(state) {
+  const current = state.status === "active" ? currentPlayer(state) : null;
+  const next = nextPlayer(state);
+  let headline;
+  let detail;
+  const prompt = state.current;
+  if (state.status === "ended") {
+    headline = "Game over";
+    detail = state.endReason ?? undefined;
+  } else if (prompt && current) {
+    const kind = prompt.kind === "truth" ? "Truth" : "Dare";
+    const suffix = prompt.outcome === "done" ? " \u2014 done" : prompt.outcome === "refused" ? " \u2014 refused" : "";
+    headline = current.name + ": " + kind + (prompt.random ? " (random)" : "") + suffix;
+    detail = promptText(state, prompt);
+    if (prompt.outcome !== "pending")
+      detail += " " + describeOutcome(state, prompt);
+  } else {
+    headline = (current?.name ?? "Someone") + " to choose";
+    detail = state.previous ? describeOutcome(state, state.previous) || undefined : undefined;
+  }
+  const facts = [
+    { label: "Truths left", value: String(state.truths.remaining.length) },
+    { label: "Dares left", value: String(state.dares.remaining.length) },
+    { label: "Refusing", value: refusalRule(state) }
+  ];
+  if (state.tiers.length)
+    facts.push({ label: "Intensity", value: state.tiers.map((tier) => TIER_LABELS[tier].label).join(", ") });
+  if (state.turn.direction === -1)
+    facts.push({ label: "Turn order", value: "Reversed" });
+  return {
+    gameId: "truth_or_dare",
+    gameName: "Truth or Dare",
+    status: state.status,
+    turnNumber: state.turn.number,
+    phase: state.phase,
+    phaseLabel: PHASES2[state.phase] ?? state.phase,
+    direction: directionOf(state),
+    currentPlayerId: current?.id ?? null,
+    nextPlayerId: next?.id ?? null,
+    players: state.players.map((player) => {
+      const badges = [];
+      const tally = state.tally[player.id];
+      if (tally?.truths)
+        badges.push(String(tally.truths) + (tally.truths === 1 ? " truth" : " truths"));
+      if (tally?.dares)
+        badges.push(String(tally.dares) + (tally.dares === 1 ? " dare" : " dares"));
+      const strikes = state.strikes[player.id] ?? 0;
+      if (state.refusals === "strikes" && strikes > 0)
+        badges.push("Strikes " + String(strikes) + "/" + String(state.strikeLimit));
+      if (!player.active)
+        badges.push("Out");
+      if (state.winners.includes(player.id))
+        badges.push("Winner");
+      return {
+        id: player.id,
+        name: player.name,
+        kind: player.kind,
+        active: player.active,
+        current: player.id === current?.id,
+        next: player.id === next?.id && next?.id !== current?.id,
+        badges
+      };
+    }),
+    headline,
+    ...detail ? { detail } : {},
+    facts,
+    recent: recentLog(state, 6),
+    ...state.status === "ended" && state.endReason ? { endSummary: state.endReason } : {}
+  };
+}
+var truthOrDare = {
+  id: "truth_or_dare",
+  name: "Truth or Dare",
+  description: "Pick truth or dare and face a prompt from the pool. Prompts never repeat; refusing can cost you.",
+  minPlayers: 2,
+  phases: PHASES2,
+  defaultOptions: defaultOptions2,
+  normalizeOptions: normalizeOptions2,
+  setup: setup2,
+  legalActions: legalActions2,
+  apply: apply2,
+  promptBlock: promptBlock2,
+  view: view2
+};
 
 // src/engine/registry.ts
-var GAMES = [kingsCup];
+var GAMES = [kingsCup, truthOrDare];
 var PLANNED = [
-  { id: "never_have_i_ever", name: "Never Have I Ever", description: "Take turns confessing; lose a life for everything you have done.", minPlayers: 2, available: false },
-  { id: "truth_or_dare", name: "Truth or Dare", description: "Pick truth or dare and face a prompt from the pool.", minPlayers: 2, available: false }
+  { id: "never_have_i_ever", name: "Never Have I Ever", description: "Take turns confessing; lose a life for everything you have done.", minPlayers: 2, available: false }
 ];
 function listGameDefinitions() {
   return GAMES;

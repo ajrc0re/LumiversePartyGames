@@ -328,6 +328,17 @@ export function drawFrom<T>(deck: Deck<T>): T {
   return card;
 }
 
+// ─── Input helpers ──────────────────────────────────────────────────────────
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Collapses whitespace, trims, and caps the length; non-strings become "". */
+export function cleanText(value: unknown, limit: number): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
+}
+
 // ─── Text helpers for prompt blocks ────────────────────────────────────────
 
 export const STANDING_INSTRUCTION =
