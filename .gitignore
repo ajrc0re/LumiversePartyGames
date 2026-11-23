@@ -1,0 +1,5 @@
+.vscode/
+node_modules/
+*.tgz
+*.log
+# Lumiverse loads dist/backend.js and dist/frontend.js directly; keep them committed.
