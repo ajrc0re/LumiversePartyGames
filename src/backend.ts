@@ -2,8 +2,9 @@ import type { MacroDefinitionDTO, SpindleAPI, SpindleCommandDTO } from "lumivers
 import { cryptoRng, cryptoSeed } from "./engine/rng";
 import type { TimelineMessage } from "./engine/session";
 import { SETTINGS_PATH } from "./backend/settings";
+import { handlePartyRequest } from "./backend/requests";
 import { PartyGamesService, type HostPort } from "./backend/service";
-import type { PartyChanged, PartyReply, PartyRequestAction, PlayerInput } from "./types";
+import type { PartyChanged } from "./types";
 
 declare const spindle: SpindleAPI;
 
@@ -83,70 +84,12 @@ function notifyChanged(chatId: string | null, reason: string, userId?: string): 
 
 // ─── Frontend requests ──────────────────────────────────────────────────────
 
-const MUTATING: ReadonlySet<PartyRequestAction> = new Set(["start", "act", "undo", "end", "save-settings"]);
-
-function parsePlayers(value: unknown): PlayerInput[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    const source = record(entry);
-    const name = typeof source.name === "string" ? source.name : "";
-    const kind = source.kind === "user" || source.kind === "character" || source.kind === "npc" ? source.kind : "npc";
-    return name.trim() ? [{ name, kind }] : [];
-  });
-}
-
-async function handleRequest(raw: unknown, userId?: string): Promise<void> {
-  const request = record(raw);
-  if (request.type !== "party:request" || typeof request.requestId !== "string" || typeof request.action !== "string") return;
-  const action = request.action as PartyRequestAction;
-  const input = record(request.input);
-  const chatId = nonEmpty(input.chatId);
-  const reply = (result?: unknown, error?: string) => {
-    const message: PartyReply = { type: "party:reply", requestId: request.requestId as string, ...(error ? { error } : { result }) };
-    spindle.sendToFrontend(message, userId);
-  };
-  try {
-    const current = service(userId);
-    const requireChat = (): string => {
-      if (!chatId) throw new Error("Open a chat to play.");
-      return chatId;
-    };
-    let result: unknown;
-    switch (action) {
-      case "state":
-        result = await current.state(requireChat());
-        break;
-      case "suggest-players":
-        result = await current.suggestPlayers(requireChat());
-        break;
-      case "start":
-        result = await current.start(requireChat(), String(input.gameId ?? ""), parsePlayers(input.players), input.options);
-        break;
-      case "act":
-        result = (await current.act(requireChat(), input.action)).state;
-        break;
-      case "undo":
-        result = await current.undo(requireChat());
-        break;
-      case "end":
-        result = await current.end(requireChat());
-        break;
-      case "save-settings":
-        await current.saveSettings(input.settings);
-        result = chatId ? await current.state(chatId) : null;
-        break;
-      default:
-        throw new Error("Unknown Party Games action.");
-    }
-    reply(result);
-    if (MUTATING.has(action)) notifyChanged(chatId ?? null, action, userId);
-  } catch (error) {
-    reply(undefined, errorMessage(error));
-  }
-}
-
 spindle.onFrontendMessage((payload, userId) => {
-  void handleRequest(payload, userId);
+  void handlePartyRequest(payload, service(userId)).then(({ reply, changed }) => {
+    // Replies and change notices go only to the user who made the request.
+    if (reply) spindle.sendToFrontend(reply, userId);
+    if (changed) spindle.sendToFrontend(changed, userId);
+  });
 });
 
 // ─── Prompt injection ───────────────────────────────────────────────────────

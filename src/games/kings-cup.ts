@@ -207,7 +207,7 @@ function describeResolution(state: KingsCupState, turnCard: TurnCard): string {
     case "kings_cup":
       return drawer + " poured into the King's Cup.";
     default:
-      return "The card's rule played out.";
+      return drawer + "'s " + rule.title + " card played out.";
   }
 }
 

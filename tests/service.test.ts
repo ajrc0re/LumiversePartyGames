@@ -1,81 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { ConditionalChatMetadataDTO, InterceptorResultDTO, LlmMessageDTO } from "lumiverse-spindle-types";
-import { mulberry32 } from "../src/engine/rng";
-import type { TimelineMessage } from "../src/engine/session";
-import { CONDITIONAL_METADATA_CAPABILITY, METADATA_KEY, PartyGamesService, type ChatRecord, type HostPort } from "../src/backend/service";
-import type { PartyGamesSettings } from "../src/types";
-
-interface FakeChat {
-  metadata: Record<string, unknown>;
-  messages: TimelineMessage[];
-}
-
-class FakeHost implements HostPort {
-  chats = new Map<string, FakeChat>();
-  permissions = new Set(["chats", "chat_mutation", "interceptor"]);
-  capabilities = new Set([CONDITIONAL_METADATA_CAPABILITY]);
-  settings: unknown = {};
-  macroText = "Sam␞Riley␞";
-  warnings: string[] = [];
-  userIds: Array<string | undefined> = [];
-  casCalls = 0;
-  replaceCalls = 0;
-  /** Simulate another writer touching the chat between read and write this many times. */
-  conflicts = 0;
-  private counter = 0;
-
-  addChat(id: string, messages: TimelineMessage[] = [{ id: "greeting", swipeId: 0 }]): FakeChat {
-    const chat = { metadata: { unrelated: "keep me" }, messages };
-    this.chats.set(id, chat);
-    return chat;
-  }
-
-  hasPermission(permission: string): boolean { return this.permissions.has(permission); }
-  hasCapability(capability: string): boolean { return this.capabilities.has(capability); }
-
-  async getChat(chatId: string, userId?: string): Promise<ChatRecord | null> {
-    this.userIds.push(userId);
-    const chat = this.chats.get(chatId);
-    return chat ? { id: chatId, metadata: structuredClone(chat.metadata) } : null;
-  }
-
-  async getTimeline(chatId: string): Promise<TimelineMessage[]> {
-    return [...(this.chats.get(chatId)?.messages ?? [])];
-  }
-
-  async compareAndSetMetadata(chatId: string, input: ConditionalChatMetadataDTO, userId?: string): Promise<ChatRecord | null> {
-    this.casCalls += 1;
-    this.userIds.push(userId);
-    const chat = this.chats.get(chatId);
-    if (!chat) return null;
-    if (this.conflicts > 0) {
-      this.conflicts -= 1;
-      chat.metadata = { ...chat.metadata, touched: this.casCalls };
-      return null;
-    }
-    const last = chat.messages.at(-1)?.id ?? null;
-    if (JSON.stringify(chat.metadata) !== JSON.stringify(input.expected_metadata)) return null;
-    if (input.expected_last_message_id !== undefined && input.expected_last_message_id !== last) return null;
-    chat.metadata = structuredClone(input.metadata);
-    return { id: chatId, metadata: chat.metadata };
-  }
-
-  async replaceMetadata(chatId: string, metadata: Record<string, unknown>, userId?: string): Promise<void> {
-    this.replaceCalls += 1;
-    this.userIds.push(userId);
-    const chat = this.chats.get(chatId);
-    if (chat) chat.metadata = structuredClone(metadata);
-  }
-
-  async resolveMacros(): Promise<string> { return this.macroText; }
-  async readSettings(): Promise<unknown> { return this.settings; }
-  async writeSettings(value: PartyGamesSettings): Promise<void> { this.settings = value; }
-  newId(prefix: string): string { return prefix + String(++this.counter); }
-  seed(): number { return ++this.counter; }
-  rng() { return mulberry32(1234); }
-  now(): number { return 1000 + this.counter; }
-  warn(message: string): void { this.warnings.push(message); }
-}
+import type { InterceptorResultDTO, LlmMessageDTO } from "lumiverse-spindle-types";
+import { handlePartyRequest } from "../src/backend/requests";
+import { METADATA_KEY, PartyGamesService } from "../src/backend/service";
+import { FakeHost } from "./fake-host";
 
 const PLAYERS = [{ name: "Sam", kind: "user" as const }, { name: "Riley", kind: "character" as const }];
 
@@ -250,5 +177,38 @@ describe("prompt injection", () => {
     host.chats.clear();
     expect(await service.intercept(prompt, { chatId: "c1" })).toBe(prompt);
     expect(host.warnings.at(-1)).toContain("prompt injection skipped");
+  });
+});
+
+describe("frontend request routing", () => {
+  test("replies with state and announces changes only for mutations", async () => {
+    const host = new FakeHost();
+    host.addChat("c1");
+    const service = new PartyGamesService(host);
+    const read = await handlePartyRequest({ type: "party:request", requestId: "r1", action: "state", input: { chatId: "c1" } }, service);
+    expect(read.reply).toMatchObject({ type: "party:reply", requestId: "r1" });
+    expect(read.changed).toBeNull();
+    const start = await handlePartyRequest({
+      type: "party:request",
+      requestId: "r2",
+      action: "start",
+      input: { chatId: "c1", gameId: "kings_cup", players: [{ name: "Sam", kind: "user" }, { name: "Riley" }, { name: "  " }, 5] },
+    }, service);
+    expect(start.reply?.error).toBeUndefined();
+    expect(start.changed).toEqual({ type: "party:changed", chatId: "c1", reason: "start" });
+    const players = (start.reply?.result as { game: { view: { players: Array<{ name: string; kind: string }> } } }).game.view.players;
+    expect(players.map((player) => [player.name, player.kind])).toEqual([["Sam", "user"], ["Riley", "npc"]]);
+  });
+
+  test("turns failures into error replies and ignores foreign payloads", async () => {
+    const host = new FakeHost();
+    host.addChat("c1");
+    const service = new PartyGamesService(host);
+    const failed = await handlePartyRequest({ type: "party:request", requestId: "r3", action: "act", input: { chatId: "c1", action: { type: "draw" } } }, service);
+    expect(failed.reply).toEqual({ type: "party:reply", requestId: "r3", error: "No game is running in this chat." });
+    expect(failed.changed).toBeNull();
+    const noChat = await handlePartyRequest({ type: "party:request", requestId: "r4", action: "state", input: {} }, service);
+    expect(noChat.reply?.error).toBe("Open a chat to play.");
+    expect(await handlePartyRequest({ type: "other" }, service)).toEqual({ reply: null, changed: null });
   });
 });

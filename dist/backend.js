@@ -56,6 +56,75 @@ function insertAtDepth(messages, value, depth) {
   return [...messages.slice(0, index), value, ...messages.slice(index)];
 }
 
+// src/backend/requests.ts
+var MUTATING = new Set(["start", "act", "undo", "end", "save-settings"]);
+function record(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function parsePlayers(value) {
+  if (!Array.isArray(value))
+    return [];
+  return value.flatMap((entry) => {
+    const source = record(entry);
+    const name = typeof source.name === "string" ? source.name : "";
+    const kind = source.kind === "user" || source.kind === "character" || source.kind === "npc" ? source.kind : "npc";
+    return name.trim() ? [{ name, kind }] : [];
+  });
+}
+async function handlePartyRequest(raw, service) {
+  const request = record(raw);
+  if (request.type !== "party:request" || typeof request.requestId !== "string" || typeof request.action !== "string") {
+    return { reply: null, changed: null };
+  }
+  const requestId = request.requestId;
+  const action = request.action;
+  const input = record(request.input);
+  const chatId = typeof input.chatId === "string" && input.chatId ? input.chatId : undefined;
+  const requireChat = () => {
+    if (!chatId)
+      throw new Error("Open a chat to play.");
+    return chatId;
+  };
+  try {
+    let result;
+    switch (action) {
+      case "state":
+        result = await service.state(requireChat());
+        break;
+      case "suggest-players":
+        result = await service.suggestPlayers(requireChat());
+        break;
+      case "start":
+        result = await service.start(requireChat(), String(input.gameId ?? ""), parsePlayers(input.players), input.options);
+        break;
+      case "act":
+        result = (await service.act(requireChat(), input.action)).state;
+        break;
+      case "undo":
+        result = await service.undo(requireChat());
+        break;
+      case "end":
+        result = await service.end(requireChat());
+        break;
+      case "save-settings":
+        await service.saveSettings(input.settings);
+        result = chatId ? await service.state(chatId) : null;
+        break;
+      default:
+        throw new Error("Unknown Party Games action.");
+    }
+    return {
+      reply: { type: "party:reply", requestId, result },
+      changed: MUTATING.has(action) ? { type: "party:changed", chatId: chatId ?? null, reason: action } : null
+    };
+  } catch (error) {
+    return { reply: { type: "party:reply", requestId, error: errorMessage(error) }, changed: null };
+  }
+}
+
 // src/engine/core.ts
 class IllegalActionError extends Error {
   constructor(message) {
@@ -316,7 +385,7 @@ function describeResolution(state, turnCard) {
     case "kings_cup":
       return drawer + " poured into the King's Cup.";
     default:
-      return "The card's rule played out.";
+      return drawer + "'s " + rule.title + " card played out.";
   }
 }
 function pendingLine(state, turnCard) {
@@ -826,7 +895,7 @@ function missingPermissions(host) {
 function permissionError(missing) {
   return new Error("Party Games needs the " + missing.join(" and ") + " permission" + (missing.length === 1 ? "" : "s") + " to keep score in this chat.");
 }
-function errorMessage(error) {
+function errorMessage2(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -844,7 +913,7 @@ class PartyGamesService {
       try {
         this.settingsCache = normalizeSettings(await this.host.readSettings(this.userId));
       } catch (error) {
-        this.host.warn("settings read failed: " + errorMessage(error));
+        this.host.warn("settings read failed: " + errorMessage2(error));
         return { ...DEFAULT_SETTINGS };
       }
     }
@@ -934,7 +1003,7 @@ class PartyGamesService {
       const resolved = await this.host.resolveMacros(["{{user}}", "{{char}}", "{{group}}"].join(separator), chatId, this.userId);
       [user = "", char = "", group = ""] = resolved.split(separator).map((part) => part.trim());
     } catch (error) {
-      this.host.warn("player suggestion failed: " + errorMessage(error));
+      this.host.warn("player suggestion failed: " + errorMessage2(error));
     }
     const players = [];
     const seen = new Set;
@@ -1039,7 +1108,7 @@ class PartyGamesService {
       const result = insertAtDepth(messages, injected, settings.injectionDepth);
       return { messages: result, breakdown: [{ messageIndex: result.indexOf(injected), name: "Party Games: game state" }] };
     } catch (error) {
-      this.host.warn("prompt injection skipped: " + errorMessage(error));
+      this.host.warn("prompt injection skipped: " + errorMessage2(error));
       return messages;
     }
   }
@@ -1048,10 +1117,10 @@ class PartyGamesService {
 // src/backend.ts
 var LOG_PREFIX = "[Party Games] ";
 var LEAN_MESSAGES_CAPABILITY = "chat-lean-messages-v1";
-function errorMessage2(error) {
+function errorMessage3(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function record(value) {
+function record2(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function nonEmpty(value) {
@@ -1105,71 +1174,13 @@ function notifyChanged(chatId, reason, userId) {
   const message = { type: "party:changed", chatId, reason };
   spindle.sendToFrontend(message, userId);
 }
-var MUTATING = new Set(["start", "act", "undo", "end", "save-settings"]);
-function parsePlayers(value) {
-  if (!Array.isArray(value))
-    return [];
-  return value.flatMap((entry) => {
-    const source = record(entry);
-    const name = typeof source.name === "string" ? source.name : "";
-    const kind = source.kind === "user" || source.kind === "character" || source.kind === "npc" ? source.kind : "npc";
-    return name.trim() ? [{ name, kind }] : [];
-  });
-}
-async function handleRequest(raw, userId) {
-  const request = record(raw);
-  if (request.type !== "party:request" || typeof request.requestId !== "string" || typeof request.action !== "string")
-    return;
-  const action = request.action;
-  const input = record(request.input);
-  const chatId = nonEmpty(input.chatId);
-  const reply = (result, error) => {
-    const message = { type: "party:reply", requestId: request.requestId, ...error ? { error } : { result } };
-    spindle.sendToFrontend(message, userId);
-  };
-  try {
-    const current = service(userId);
-    const requireChat = () => {
-      if (!chatId)
-        throw new Error("Open a chat to play.");
-      return chatId;
-    };
-    let result;
-    switch (action) {
-      case "state":
-        result = await current.state(requireChat());
-        break;
-      case "suggest-players":
-        result = await current.suggestPlayers(requireChat());
-        break;
-      case "start":
-        result = await current.start(requireChat(), String(input.gameId ?? ""), parsePlayers(input.players), input.options);
-        break;
-      case "act":
-        result = (await current.act(requireChat(), input.action)).state;
-        break;
-      case "undo":
-        result = await current.undo(requireChat());
-        break;
-      case "end":
-        result = await current.end(requireChat());
-        break;
-      case "save-settings":
-        await current.saveSettings(input.settings);
-        result = chatId ? await current.state(chatId) : null;
-        break;
-      default:
-        throw new Error("Unknown Party Games action.");
-    }
-    reply(result);
-    if (MUTATING.has(action))
-      notifyChanged(chatId ?? null, action, userId);
-  } catch (error) {
-    reply(undefined, errorMessage2(error));
-  }
-}
 spindle.onFrontendMessage((payload, userId) => {
-  handleRequest(payload, userId);
+  handlePartyRequest(payload, service(userId)).then(({ reply, changed }) => {
+    if (reply)
+      spindle.sendToFrontend(reply, userId);
+    if (changed)
+      spindle.sendToFrontend(changed, userId);
+  });
 });
 var interceptorDisposer;
 function syncInterceptor() {
@@ -1186,10 +1197,10 @@ function syncInterceptor() {
 }
 syncInterceptor();
 function macroIdentity(context) {
-  const value = record(context);
-  const env = record(value.env);
-  const chat = record(env.chat);
-  const extra = record(env.extra);
+  const value = record2(context);
+  const env = record2(value.env);
+  const chat = record2(env.chat);
+  const extra = record2(env.extra);
   return {
     chatId: nonEmpty(value.chatId) ?? nonEmpty(chat.id),
     userId: nonEmpty(value.userId) ?? nonEmpty(extra.userId)
@@ -1241,7 +1252,7 @@ spindle.commands.onInvoked(async (commandId, context, origin) => {
       notifyChanged(chatId, "undo", userId);
     }
   } catch (error) {
-    spindle.toast.warning(errorMessage2(error), toastOptions);
+    spindle.toast.warning(errorMessage3(error), toastOptions);
   }
 });
 spindle.permissions.onChanged(() => {
