@@ -1,0 +1,13 @@
+{
+  "name": "Party Games",
+  "identifier": "lumiverse_party_games",
+  "version": "0.2.0",
+  "author": "ajrc0re",
+  "github": "https://github.com/ajrc0re/LumiversePartyGames",
+  "homepage": "https://github.com/ajrc0re/LumiversePartyGames",
+  "description": "Play Kings Cup and other party games in a chat. The extension deals the cards and keeps score; the model narrates.",
+  "permissions": ["chats", "chat_mutation", "interceptor"],
+  "entry_backend": "dist/backend.js",
+  "entry_frontend": "dist/frontend.js",
+  "minimum_lumiverse_version": "1.2.0"
+}
