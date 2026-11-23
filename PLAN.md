@@ -46,11 +46,11 @@ Each game implements one interface (see Internal Interfaces) and registers with 
 2. **Never Have I Ever**
    - Statement pool without repeats; lives/fingers per player (default 10, configurable); players at 0 are eliminated and skipped in rotation; last player standing wins (or play until the pool runs out).
    - Phases: `statement` (active player says one, from the pool or their own) → `reactions` (who has done it; lose a life) → `end_turn`.
-3. **Truth or Dare**
-   - Separate truth and dare pools, no repeats, configurable intensity tiers.
-   - Phases: `choose` (truth or dare) → `prompt` (drawn from the matching pool) → `perform` or `refuse` → optional penalty → `end_turn`.
+3. **Truth or Dare** (revised in 0.4.0)
+   - The extension tracks roles only: who asks and who answers. The truths and dares, and whether the player picks truth or dare, are left to the roleplay; no prompts ship with the extension.
+   - Setup picks a random asker and a random player to answer. On "Next round" the player becomes the asker and a new player is picked at random from everyone else.
 
-Bundled pools ship as JSON data files; users can add or disable entries from the UI.
+If Never Have I Ever ships statements, they go in JSON data files that users can add to or disable from the UI.
 
 ### State and swipe safety
 
@@ -99,7 +99,7 @@ interface GameSession {
 2. Engine core + Kings Cup as pure modules with unit tests.
 3. Backend wiring: session storage, anchoring, state derivation, interceptor block, macro, slash commands.
 4. Frontend: scoreboard panel, setup flow, input-bar actions.
-5. Never Have I Ever and Truth or Dare modules + bundled pools.
+5. Never Have I Ever and Truth or Dare modules.
 6. Optional LLM tools for NPC turns.
 
 ## Test Plan
@@ -110,7 +110,7 @@ interface GameSession {
 - Manual in Lumiverse: full Kings Cup game in one chat, swipe and delete mid-game, two chats with separate games, reload the app mid-game.
 - Before handoff: `bun run typecheck`, `bun test`, `bun run build`, `git diff --check`.
 
-## Status (0.3.0)
+## Status (0.4.0)
 
 Milestones 1–4 are implemented, and milestone 5 is done for Truth or Dare. Decisions made along the way:
 
@@ -123,14 +123,14 @@ Milestones 1–4 are implemented, and milestone 5 is done for Truth or Dare. Dec
 - **Turn order:** "As listed" or "Random" at setup (seats shuffled once with the setup RNG, so it is part of the stored setup state). Mid-game, `set_direction` is a table action every game gets through `applyAction` in `src/engine/core.ts`; the panel shows it as a "Reverse turn order" toggle.
 - **Kings Cup card rules:** editable at setup (per game), savable as the user's default for new games (`defaults-kings_cup.json` in user storage), and editable mid-game through a `set_rules` action. Mid-game edits are events, so undo and swipes cover them. Kings always keep the King's Cup effect.
 
-- **Truth or Dare:** phases `choose` → `prompt` → `end_turn`. `choose` takes truth, dare, or random; random uses the event's seeded RNG, so it is reproducible and swipe-safe. That answers who decides for model-played characters: the user clicks Random. Prompts come from `src/data/truth-or-dare.json` (three tiers, stable ids) plus the user's own, are shuffled once at setup, and never repeat; `swap` skips one. `{other}` is filled with another active player picked when the prompt is drawn. Refusals are free, a named forfeit, or strikes with elimination (last player standing wins). Bundled prompts are kept PG-13 across tiers; anything stronger belongs in the user's own prompts.
+- **Truth or Dare:** roles only, per the user's direction: the extension decides who asks and who answers, and the roleplay decides everything else (the question, truth vs dare, the dare). One phase, one action (`next_round`): the answering player becomes the asker and a new player is picked at random from the other active players. `turn.index` is the answering player, so shared "whose turn" helpers mean "who answers". Each round's pick comes from a seed fixed at setup plus the round number, not the event seed, so a rolled-back round replays to the same pick. The game sets `usesTurnOrder: false`: setup hides the turn order option and `set_direction` is refused. (0.3.0 briefly shipped bundled prompts, tiers, and refusal rules; they were removed.)
 - **Frontend layout:** per-game setup panels live in `src/frontend-options.ts`; the DOM helper is `src/dom.ts`.
 
-Not yet done: Never Have I Ever (rest of milestone 5), adding prompts mid-game, LLM tools (milestone 6), and manual testing in a live Lumiverse.
+Not yet done: Never Have I Ever (rest of milestone 5), LLM tools (milestone 6), and manual testing in a live Lumiverse.
 
 ## Open Questions
 
-- Who decides for model-played characters: for Truth vs Dare, the user clicks Random (extension RNG). Who an "8 Mate" or "2 You" targets is still the user's pick.
+- Who decides for model-played characters: in Truth or Dare the roleplay does (the extension only assigns roles). Who an "8 Mate" or "2 You" targets is still the user's pick.
 - ~~Single chats with one character vs group chats~~: answered in 0.2.0; participants are entered by hand.
 - ~~Which Kings Cup house-rule set should be the default, and per chat or globally?~~: answered in 0.2.0; standard rules by default, editable per game, with a saved per-user default.
-- ~~Content tiers for ToD pools~~: answered in 0.3.0; Mild/Bold/Wild, Mild and Bold on by default, chosen per game with a saved default. NHIE still to decide.
+- ~~Content tiers for ToD pools~~: moot; Truth or Dare ships no prompts. Whether Never Have I Ever ships statements (or, like Truth or Dare, leaves them to the roleplay) is still open.

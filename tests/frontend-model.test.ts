@@ -86,7 +86,7 @@ describe("frontend model", () => {
   });
 
   test("setup counts {{user}} plus named participants", () => {
-    const game = { id: "kings_cup", name: "Kings Cup", description: "", minPlayers: 2, available: true };
+    const game = { id: "kings_cup", name: "Kings Cup", description: "", minPlayers: 2, available: true, usesTurnOrder: true };
     const draft = (includeUser: boolean, participants: string[]) => ({ includeUser, participants });
     expect(setupProblem(undefined, draft(true, []))).toBe("Choose a game.");
     expect(setupProblem({ ...game, available: false }, draft(true, ["Riley"]))).toContain("not available");

@@ -151,10 +151,17 @@ export interface GameView {
   gameName: string;
   status: "active" | "ended";
   turnNumber: number;
+  /** What one turn is called, e.g. "Round". Defaults to "Turn". */
+  turnNoun?: string;
   phase: string;
   phaseLabel: string;
-  /** "reversed" after a mid-game reversal of the turn order. */
-  direction: "forward" | "reversed";
+  /**
+   * "reversed" after a mid-game reversal of the turn order. Absent for games
+   * with no fixed turn order, which cannot be reversed.
+   */
+  direction?: "forward" | "reversed";
+  /** Named roles this turn (e.g. who asks and who answers), shown instead of now/next. */
+  roles?: Array<{ label: string; playerId: string }>;
   currentPlayerId: string | null;
   nextPlayerId: string | null;
   players: PlayerView[];
@@ -176,6 +183,8 @@ export interface GameSummary {
   description: string;
   minPlayers: number;
   available: boolean;
+  /** False when the game picks who goes next itself, so seat order and reversal do not apply. */
+  usesTurnOrder: boolean;
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────

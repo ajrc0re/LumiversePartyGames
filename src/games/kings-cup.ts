@@ -505,6 +505,7 @@ export const kingsCup: GameDefinition<KingsCupState, KingsCupOptions> = {
   name: "Kings Cup",
   description: "Draw from a 52-card deck; every card has a rule. Whoever draws the 4th King drinks the King's Cup.",
   minPlayers: 2,
+  usesTurnOrder: true,
   phases: PHASES,
   defaultOptions,
   normalizeOptions,

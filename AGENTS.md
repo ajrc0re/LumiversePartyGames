@@ -2,7 +2,7 @@
 
 ## Project
 
-Lumiverse Party Games is a TypeScript Spindle extension with a browser frontend and a Bun backend. It runs party games (Kings Cup first; Never Have I Ever and Truth or Dare next) inside a Lumiverse chat. Read `PLAN.md` before changing behavior. When a Lumiverse checkout is available, its `developer-docs/` folder is the primary API reference; the `lumiverse-spindle-types` declarations are the source of truth for signatures.
+Lumiverse Party Games is a TypeScript Spindle extension with a browser frontend and a Bun backend. It runs party games (Kings Cup and Truth or Dare; Never Have I Ever next) inside a Lumiverse chat. Read `PLAN.md` before changing behavior. When a Lumiverse checkout is available, its `developer-docs/` folder is the primary API reference; the `lumiverse-spindle-types` declarations are the source of truth for signatures.
 
 ## The rule that shapes everything
 
@@ -13,7 +13,6 @@ Lumiverse Party Games is a TypeScript Spindle extension with a browser frontend 
 - `src/types.ts`: contracts shared by engine, backend, and frontend. No Spindle or DOM imports.
 - `src/engine/`: pure, deterministic core (players, turn rotation, phase checks, decks, RNG, session anchoring). No Spindle imports.
 - `src/games/`: one module per game implementing `GameDefinition`. Register new games in `src/engine/registry.ts`.
-- `src/data/`: bundled prompt pools as JSON. Entry ids are stored in user settings (to disable entries), so never renumber or reuse an id; append new entries.
 - `src/frontend-options.ts`: per-game setup panels. `src/dom.ts`: the DOM helper.
 - `src/backend/`: Spindle-facing services (storage, prompt injection, requests). Keep Spindle calls behind the small interfaces there so tests can fake them.
 - `src/backend.ts`, `src/frontend.ts`: entry points. Keep them thin.

@@ -43,17 +43,13 @@ The deck is shuffled once when the game starts and is drawn without replacement,
 
 ## Truth or Dare
 
-On each turn the player picks **Truth**, **Dare**, or **Random** (the game picks for them, which is handy on characters' turns). The game draws a prompt from that pool, and the player either does it (**Answered** / **Did the dare**) or **Refuses**. **Draw a different one** skips a prompt that doesn't fit the scene. Prompts never repeat within a game, and the game ends when both pools run out.
+The game only keeps track of who is asking and who is answering; the truths, the dares, and whether the player picks truth or dare are up to the roleplay.
 
-Setup options:
+1. When the game starts it picks a random **asker** and a random **player** to answer.
+2. The asker asks the player "Truth or dare?", and the player picks one and answers it or does it in the story.
+3. Press **Next round**. The player becomes the new asker, and the game picks someone else at random to answer.
 
-- **Intensity:** Mild (friendly questions, silly stunts), Bold (embarrassing confessions, flirty dares), Wild (deep secrets, daring stunts). Mild and Bold are on by default.
-- **Refusing:** nothing happens, the player pays a forfeit you name (default "drinks"), or the player gets a strike and is out after a set number. With strikes, the last player standing wins.
-- **Your own truths and dares:** one per line; they are always included. `{player}` is whoever is taking the turn, and `{other}` is another player picked at random when the prompt is drawn.
-- **Bundled prompts:** untick any you never want to see.
-- **Save as my default** keeps these settings for new games.
-
-The model is told the exact prompt and is asked not to swap it for another.
+The panel shows who is **Asking** and who is **Answering**, and the model is told the same. When you are the one asking or answering, the model is told not to decide for you. Each round's random pick is fixed when the game starts, so undoing a round or swiping back and redoing it brings up the same player. There is no fixed seat order, so the turn order setting and the reverse toggle do not apply.
 
 ## Swipes, deletes, and undo
 

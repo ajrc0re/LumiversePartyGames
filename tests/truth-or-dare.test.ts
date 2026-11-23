@@ -1,21 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { applyAction, createPlayers, currentPlayer, IllegalActionError } from "../src/engine/core";
 import { mulberry32 } from "../src/engine/rng";
-import { appendAction, createSession, deriveGame, Timeline } from "../src/engine/session";
-import {
-  BUNDLED_DARES,
-  BUNDLED_TRUTHS,
-  promptPool,
-  promptText,
-  truthOrDare,
-  type TruthOrDareState,
-} from "../src/games/truth-or-dare";
+import { appendAction, createSession, deriveGame, Timeline, undoLast } from "../src/engine/session";
+import { pickPlayer, truthOrDare, type TruthOrDareState } from "../src/games/truth-or-dare";
 import type { GameAction } from "../src/types";
 
-function game(options: unknown = {}, names = ["Sam", "Riley", "Alex"], seed = 1): TruthOrDareState {
+function game(names = ["Sam", "Riley", "Alex", "Jo"], seed = 1, userFirst = true): TruthOrDareState {
   return truthOrDare.setup(
-    createPlayers(names.map((name, index) => ({ name, kind: index === 0 ? "user" : "character" }))),
-    truthOrDare.normalizeOptions(options),
+    createPlayers(names.map((name, index) => ({ name, kind: userFirst && index === 0 ? "user" : "character" }))),
+    truthOrDare.normalizeOptions({}),
     mulberry32(seed),
   );
 }
@@ -24,214 +17,137 @@ function act(state: TruthOrDareState, action: GameAction, seed = 0): TruthOrDare
   return applyAction(truthOrDare, state, action, mulberry32(seed));
 }
 
-/** Only these prompts, in this order: makes draws predictable. */
-function only(truths: string[], dares: string[], extra: Record<string, unknown> = {}): TruthOrDareState {
-  const state = game({ tiers: [], customTruths: truths, customDares: dares, ...extra });
-  const order = (list: string[], prefix: string) => list.map((text, index) => ({ id: prefix + String(index + 1), text, custom: true }));
-  return { ...state, truths: { remaining: order(truths, "ct-"), drawn: [] }, dares: { remaining: order(dares, "cd-"), drawn: [] } };
-}
+const next = (state: TruthOrDareState, seed = 0) => act(state, { type: "next_round" }, seed);
+const answering = (state: TruthOrDareState) => currentPlayer(state).id;
 
-describe("Truth or Dare bundled prompts", () => {
-  test("ship with unique ids in every tier", () => {
-    const ids = [...BUNDLED_TRUTHS, ...BUNDLED_DARES].map((prompt) => prompt.id);
-    expect(new Set(ids).size).toBe(ids.length);
-    for (const tier of ["mild", "bold", "wild"]) {
-      expect(BUNDLED_TRUTHS.filter((prompt) => prompt.tier === tier).length).toBeGreaterThanOrEqual(10);
-      expect(BUNDLED_DARES.filter((prompt) => prompt.tier === tier).length).toBeGreaterThanOrEqual(10);
+describe("Truth or Dare roles", () => {
+  test("setup picks a random asker and a different player to answer, reproducibly", () => {
+    for (let seed = 0; seed < 30; seed += 1) {
+      const state = game(undefined, seed);
+      expect(state.asker).not.toBe(answering(state));
+      expect(game(undefined, seed)).toEqual(state);
+    }
+    const askers = new Set(Array.from({ length: 40 }, (_, seed) => game(undefined, seed).asker));
+    expect(askers.size).toBe(4);
+  });
+
+  test("whoever answered asks next, and the new player is never the asker", () => {
+    let state = game();
+    for (let round = 1; round <= 40; round += 1) {
+      const answered = answering(state);
+      state = next(state);
+      expect(state.asker).toBe(answered);
+      expect(answering(state)).not.toBe(state.asker);
+      expect(state.turn.number).toBe(round + 1);
     }
   });
 
-  test("pools follow the tiers, disabled ids, and custom prompts", () => {
-    const options = truthOrDare.normalizeOptions({
-      tiers: ["mild", "nope"],
-      disabled: [BUNDLED_TRUTHS[0]!.id, "unknown-id"],
-      customTruths: ["  Who here snores?  ", "who here snores?", "", 7],
-    });
-    expect(options.tiers).toEqual(["mild"]);
-    expect(options.disabled).toEqual([BUNDLED_TRUTHS[0]!.id]);
-    expect(options.customTruths).toEqual(["Who here snores?"]);
-    const truths = promptPool(options, "truth");
-    expect(truths.some((prompt) => prompt.id === BUNDLED_TRUTHS[0]!.id)).toBe(false);
-    expect(truths.every((prompt) => prompt.custom || prompt.tier === "mild")).toBe(true);
-    expect(truths.at(-1)).toEqual({ id: "ct-1", text: "Who here snores?", custom: true });
+  test("everyone gets picked to answer over time", () => {
+    let state = game();
+    const answered = new Set<string>();
+    for (let round = 0; round < 60; round += 1) {
+      answered.add(answering(state));
+      state = next(state);
+    }
+    expect(answered).toEqual(new Set(["p1", "p2", "p3", "p4"]));
   });
 
-  test("defaults are mild and bold with a drinking forfeit", () => {
-    expect(truthOrDare.defaultOptions()).toMatchObject({ tiers: ["mild", "bold"], refusals: "forfeit", forfeit: "drinks", strikeLimit: 3 });
-    expect(truthOrDare.normalizeOptions({ forfeit: "  takes a shot!  ", strikeLimit: 40, refusals: "maybe" })).toMatchObject({
-      forfeit: "takes a shot",
-      strikeLimit: 9,
-      refusals: "forfeit",
-    });
+  test("with two players they take turns asking each other", () => {
+    let state = game(["Sam", "Riley"]);
+    const first = state.asker;
+    state = next(state);
+    expect(state.asker).not.toBe(first);
+    state = next(state);
+    expect(state.asker).toBe(first);
   });
 
-  test("setup refuses a game with nothing to play", () => {
-    expect(() => game({ tiers: [] })).toThrow("no prompts");
-    expect(game({ tiers: [], customDares: ["Hop on one foot."] }).dares.remaining.length).toBe(1);
+  test("each round's pick depends only on the round, not on the event seed", () => {
+    const state = game();
+    expect(answering(next(state, 1))).toBe(answering(next(state, 999)));
+    expect(pickPlayer(state, "p1", 7)).toEqual(pickPlayer(state, "p1", 7));
+  });
+
+  test("only next_round is an action, and the turn order cannot be reversed", () => {
+    const state = game();
+    expect(truthOrDare.legalActions(state)).toEqual([{
+      type: "next_round",
+      label: "Next round",
+      description: currentPlayer(state).name + " asks next; the game picks who answers.",
+      primary: true,
+    }]);
+    expect(() => act(state, { type: "draw" })).toThrow("is not an action in this game");
+    expect(() => act(state, { type: "set_direction", choice: "reversed" })).toThrow("Truth or Dare has no fixed turn order to reverse.");
+    const other = state.players.find((player) => player.id !== answering(state))!;
+    expect(() => act(state, { type: "next_round", actor: other.id })).toThrow(IllegalActionError);
+  });
+
+  test("apply never mutates its input", () => {
+    const state = game();
+    const before = JSON.stringify(state);
+    next(next(state));
+    expect(JSON.stringify(state)).toBe(before);
   });
 });
 
-describe("Truth or Dare turns", () => {
-  test("choose, answer, next turn", () => {
-    let state = only(["What scares you?"], ["Sing."]);
-    expect(truthOrDare.legalActions(state).map((action) => action.label)).toEqual(["Truth", "Dare", "Random"]);
-    state = act(state, { type: "choose", choice: "truth" });
-    expect(state.phase).toBe("prompt");
-    expect(state.current).toMatchObject({ kind: "truth", player: "p1", random: false, outcome: "pending" });
-    expect(truthOrDare.legalActions(state).map((action) => action.type)).toEqual(["perform", "refuse"]);
-    state = act(state, { type: "perform" });
-    expect(state.log.at(-1)?.text).toBe("Sam answered the truth.");
-    state = act(state, { type: "end_turn" });
-    expect(currentPlayer(state).name).toBe("Riley");
-    expect(state.previous?.outcome).toBe("done");
-    expect(state.tally.p1).toEqual({ truths: 1, dares: 0, refused: 0 });
-  });
-
-  test("random picks only from pools that still have prompts, reproducibly", () => {
-    const noTruths = only([], ["Sing.", "Dance."]);
-    for (let seed = 0; seed < 20; seed += 1) {
-      expect(act(noTruths, { type: "choose", choice: "random" }, seed).current?.kind).toBe("dare");
-    }
-    const both = only(["Q1", "Q2"], ["D1", "D2"]);
-    const kinds = new Set(Array.from({ length: 30 }, (_, seed) => act(both, { type: "choose", choice: "random" }, seed).current?.kind));
-    expect(kinds).toEqual(new Set(["truth", "dare"]));
-    expect(act(both, { type: "choose", choice: "random" }, 7).current).toEqual(act(both, { type: "choose", choice: "random" }, 7).current);
-    expect(act(both, { type: "choose", choice: "random" }, 7).current?.random).toBe(true);
-  });
-
-  test("an empty pool cannot be chosen", () => {
-    const state = only([], ["Sing."]);
-    expect(truthOrDare.legalActions(state).map((action) => action.label)).toEqual(["Dare", "Random"]);
-    expect(() => act(state, { type: "choose", choice: "truth" })).toThrow("no truths left");
-    expect(() => act(state, { type: "choose", choice: "maybe" })).toThrow(IllegalActionError);
-  });
-
-  test("{player} and {other} are filled in, and {other} is never the player", () => {
-    const state = only([], ["{player} dances with {other}."]);
-    for (let seed = 0; seed < 20; seed += 1) {
-      const next = act(state, { type: "choose", choice: "dare" }, seed);
-      expect(next.current?.other).not.toBe("p1");
-      expect(next.current?.other).not.toBeNull();
-      expect(promptText(next, next.current!)).toMatch(/^Sam dances with (Riley|Alex)\.$/);
-    }
-    expect(act(only(["Plain?"], []), { type: "choose", choice: "truth" }).current?.other).toBeNull();
-  });
-
-  test("prompts never repeat within a game", () => {
-    let state = game({ tiers: ["mild", "bold", "wild"] }, ["Sam", "Riley"], 9);
-    const total = state.truths.remaining.length + state.dares.remaining.length;
-    const seen = new Set<string>();
-    while (state.status === "active") {
-      state = act(state, { type: "choose", choice: "random" }, seen.size);
-      const id = state.current!.prompt.id;
-      expect(seen.has(id)).toBe(false);
-      seen.add(id);
-      state = act(state, { type: "perform" });
-      state = act(state, { type: "end_turn" });
-    }
-    expect(seen.size).toBe(total);
-    expect(state.endReason).toContain("Out of prompts");
-  });
-
-  test("swap discards the prompt and draws another of the same kind", () => {
-    let state = only([], ["D1", "D2"]);
-    state = act(state, { type: "choose", choice: "dare" });
-    expect(state.current?.prompt.text).toBe("D1");
-    state = act(state, { type: "swap" });
-    expect(state.current?.prompt.text).toBe("D2");
-    expect(state.dares.drawn.map((prompt) => prompt.text)).toEqual(["D1", "D2"]);
-    expect(truthOrDare.legalActions(state).some((action) => action.type === "swap")).toBe(false);
-    expect(() => act(state, { type: "swap" })).toThrow("no other dares left");
-  });
-
-  test("illegal actions are rejected per phase and per player", () => {
-    const state = only(["Q"], ["D"]);
-    expect(() => act(state, { type: "perform" })).toThrow('"perform" is not allowed during the choose phase.');
-    expect(() => act(state, { type: "choose", choice: "dare", actor: "p2" })).toThrow("It is Sam's turn, not Riley's.");
-    const prompted = act(state, { type: "choose", choice: "dare" });
-    expect(() => act(prompted, { type: "choose", choice: "truth" })).toThrow(IllegalActionError);
-    expect(() => act(prompted, { type: "end_turn" })).toThrow(IllegalActionError);
-    expect(() => act(prompted, { type: "draw" })).toThrow("is not an action in this game");
-  });
-});
-
-describe("Truth or Dare refusals", () => {
-  test("free and forfeit refusals are narrated, not scored", () => {
-    let free = only(["Q"], ["D"], { refusals: "free" });
-    free = act(act(free, { type: "choose", choice: "dare" }), { type: "refuse" });
-    expect(free.log.at(-1)?.text).toBe("Sam refused the dare.");
-    let forfeit = only(["Q"], ["D"], { refusals: "forfeit", forfeit: "takes a shot" });
-    forfeit = act(forfeit, { type: "choose", choice: "truth" });
-    expect(truthOrDare.legalActions(forfeit).find((action) => action.type === "refuse")?.description).toBe("If Sam refuses, Sam takes a shot.");
-    forfeit = act(forfeit, { type: "refuse" });
-    expect(forfeit.log.at(-1)?.text).toBe("Sam refused the truth and takes a shot.");
-    expect(forfeit.tally.p1?.refused).toBe(1);
-    expect(forfeit.phase).toBe("end_turn");
-  });
-
-  test("strikes eliminate at the limit and the last player standing wins", () => {
-    let state = only(["Q1", "Q2", "Q3", "Q4"], [], { refusals: "strikes", strikeLimit: 1 });
-    state = act(act(state, { type: "choose", choice: "truth" }), { type: "refuse" });
-    expect(state.log.at(-1)?.text).toBe("Sam refused the truth: strike 1 of 1. Sam is out.");
-    expect(state.players[0]?.active).toBe(false);
-    state = act(state, { type: "end_turn" });
-    expect(currentPlayer(state).name).toBe("Riley");
-    state = act(act(state, { type: "choose", choice: "truth" }), { type: "refuse" });
-    expect(state.status).toBe("ended");
-    expect(state.winners).toEqual(["p3"]);
-    expect(state.endReason).toBe("Alex is the last player standing.");
+describe("Truth or Dare view and prompt", () => {
+  test("the view names who asks and who answers", () => {
+    const state = game();
     const view = truthOrDare.view(state);
-    expect(view.players.find((player) => player.id === "p3")?.badges).toContain("Winner");
-    expect(view.players.find((player) => player.id === "p1")?.badges).toContain("Out");
+    const asker = state.players.find((player) => player.id === state.asker)!.name;
+    const player = currentPlayer(state).name;
+    expect(view.roles).toEqual([{ label: "Asking", playerId: state.asker }, { label: "Answering", playerId: answering(state) }]);
+    expect(view.headline).toBe(asker + " asks " + player);
+    expect(view.turnNoun).toBe("Round");
+    expect(view.direction).toBeUndefined();
+    expect(view.players.find((entry) => entry.id === state.asker)?.badges).toEqual(["Asking"]);
+    expect(view.players.find((entry) => entry.current)?.badges).toEqual(["Answering"]);
+    expect(view.recent).toEqual(["Round 1: " + asker + " asks " + player + "."]);
   });
 
-  test("strikes accumulate across turns", () => {
-    let state = only(["Q1", "Q2", "Q3", "Q4"], [], { refusals: "strikes", strikeLimit: 2 }, );
-    state = { ...state, players: state.players.slice(0, 2) };
-    for (let turn = 0; turn < 2; turn += 1) {
-      state = act(act(state, { type: "choose", choice: "truth" }), { type: "refuse" });
-      if (state.status === "active") state = act(state, { type: "end_turn" });
-    }
-    expect(state.strikes).toEqual({ p1: 1, p2: 1 });
-    expect(truthOrDare.promptBlock(state)).toContain("Strikes: Sam 1/2, Riley 1/2.");
-    state = act(state, { type: "choose", choice: "truth" });
-    expect(truthOrDare.legalActions(state).find((action) => action.type === "refuse")?.description).toBe("If Sam refuses, that is strike 2 of 2 and Sam is out.");
-  });
-});
-
-describe("Truth or Dare prompt block", () => {
-  test("choose phase", () => {
-    expect(truthOrDare.promptBlock(only(["What scares you?"], ["Sing."]))).toMatchSnapshot();
-  });
-
-  test("a pending dare names the exact prompt", () => {
-    const state = act(only([], ["{player} serenades {other}."]), { type: "choose", choice: "random" }, 3);
+  test("the prompt leaves the content to the story and protects the user's choices", () => {
+    // The first seed where Sam (the user) answers in round 1.
+    const seed = Array.from({ length: 100 }, (_, index) => index).find((candidate) => currentPlayer(game(undefined, candidate)).name === "Sam")!;
+    const state = game(undefined, seed);
+    expect(currentPlayer(state).name).toBe("Sam");
     const block = truthOrDare.promptBlock(state);
-    expect(block).toContain("Sam picked dare (chosen at random by the game).");
-    expect(block).toContain("Use this exact dare; do not replace it.");
+    expect(block).toContain("Sam is played by the user: let them choose and answer; do not decide for them.");
     expect(block).toMatchSnapshot();
   });
 
-  test("after a refusal with strikes", () => {
-    let state = only(["What scares you?", "Q2"], ["Sing."], { refusals: "strikes", strikeLimit: 3 });
-    state = act(act(state, { type: "choose", choice: "truth" }), { type: "refuse" });
-    expect(truthOrDare.promptBlock(state)).toMatchSnapshot();
-    state = act(state, { type: "end_turn" });
-    expect(truthOrDare.promptBlock(state)).toContain('Last turn: Sam\'s truth was "What scares you?". Sam refused the truth: strike 1 of 3.');
+  test("a later round mentions the last one", () => {
+    const state = next(next(game(undefined, 2, false)));
+    const block = truthOrDare.promptBlock(state);
+    expect(block).not.toContain("played by the user");
+    expect(block).toMatchSnapshot();
   });
 });
 
 describe("Truth or Dare in a session", () => {
-  test("regenerating the narration keeps the same prompt; swiping the message before it rolls back", () => {
-    const players = [{ name: "Sam", kind: "user" as const }, { name: "Riley", kind: "character" as const }];
+  const players = ["Sam", "Riley", "Alex", "Jo"].map((name) => ({ name, kind: "character" as const }));
+
+  test("rolling back a round and replaying it picks the same player", () => {
     let session = createSession(truthOrDare, players, {}, mulberry32(4), { id: "s", now: 0 });
-    const before = [{ id: "m1", swipeId: 0 }];
-    session = appendAction(truthOrDare, session, new Timeline(before), { type: "choose", choice: "random" }, { id: "e1", seed: 99, now: 1 }).session;
-    const chosen = deriveGame<TruthOrDareState>(truthOrDare, session, new Timeline(before)).state.current;
-    for (const swipe of [0, 1, 2]) {
-      const after = [...before, { id: "m2", swipeId: swipe }];
-      expect(deriveGame<TruthOrDareState>(truthOrDare, session, new Timeline(after)).state.current).toEqual(chosen);
-    }
-    expect(deriveGame<TruthOrDareState>(truthOrDare, session, new Timeline([{ id: "m1", swipeId: 1 }])).state.phase).toBe("choose");
+    session = appendAction(truthOrDare, session, new Timeline([{ id: "m1", swipeId: 0 }]), { type: "next_round" }, { id: "e1", seed: 11, now: 1 }).session;
+    const first = deriveGame<TruthOrDareState>(truthOrDare, session, new Timeline([{ id: "m1", swipeId: 0 }])).state;
+    // Swiping m1 rolls the round back; advancing again on the new swipe lands on the same pick.
+    const swiped = [{ id: "m1", swipeId: 1 }];
+    expect(deriveGame<TruthOrDareState>(truthOrDare, session, new Timeline(swiped)).state.turn.number).toBe(1);
+    session = appendAction(truthOrDare, session, new Timeline(swiped), { type: "next_round" }, { id: "e2", seed: 77, now: 2 }).session;
+    const replayed = deriveGame<TruthOrDareState>(truthOrDare, session, new Timeline(swiped)).state;
+    expect(answering(replayed)).toBe(answering(first));
+    expect(replayed.asker).toBe(first.asker);
+    // Undo does the same.
+    const undone = undoLast(truthOrDare, session, new Timeline(swiped))!;
+    expect(deriveGame<TruthOrDareState>(truthOrDare, undone, new Timeline(swiped)).state.turn.number).toBe(1);
+  });
+
+  test("regenerating the narration keeps the round", () => {
+    let session = createSession(truthOrDare, players, {}, mulberry32(5), { id: "s", now: 0 });
+    session = appendAction(truthOrDare, session, new Timeline([{ id: "m1", swipeId: 0 }]), { type: "next_round" }, { id: "e1", seed: 1, now: 1 }).session;
+    const states = [0, 1, 2].map((swipe) =>
+      deriveGame<TruthOrDareState>(truthOrDare, session, new Timeline([{ id: "m1", swipeId: 0 }, { id: "m2", swipeId: swipe }])).state);
+    expect(states[1]).toEqual(states[0]!);
+    expect(states[2]).toEqual(states[0]!);
+    expect(states[0]!.turn.number).toBe(2);
   });
 });

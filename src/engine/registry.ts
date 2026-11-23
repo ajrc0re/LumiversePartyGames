@@ -8,7 +8,7 @@ const GAMES: readonly AnyGameDefinition[] = [kingsCup, truthOrDare];
 
 /** Games on the roadmap, listed in setup so users know what is coming. */
 const PLANNED: readonly GameSummary[] = [
-  { id: "never_have_i_ever", name: "Never Have I Ever", description: "Take turns confessing; lose a life for everything you have done.", minPlayers: 2, available: false },
+  { id: "never_have_i_ever", name: "Never Have I Ever", description: "Take turns confessing; lose a life for everything you have done.", minPlayers: 2, available: false, usesTurnOrder: true },
 ];
 
 export function listGameDefinitions(): readonly AnyGameDefinition[] {
@@ -33,6 +33,7 @@ export function listGames(): GameSummary[] {
       description: game.description,
       minPlayers: game.minPlayers,
       available: true,
+      usesTurnOrder: game.usesTurnOrder,
     })),
     ...PLANNED.filter((planned) => !getGame(planned.id)),
   ];

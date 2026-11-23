@@ -349,7 +349,9 @@ export function setup(ctx: SpindleFrontendContext): () => void {
           const inputs = root.querySelectorAll<HTMLInputElement>(".pg-seat:not(.user) .pg-input");
           inputs[inputs.length - 1]?.focus();
         }, { small: true, disabled: draft.participants.length >= MAX_PARTICIPANTS })),
-        el("label", { class: "pg-field" }, el("span", { class: "pg-label", text: "Turn order" }), order),
+        selected?.usesTurnOrder === false
+          ? el("p", { class: "pg-muted", text: selected.name + " picks who goes each turn at random, so the order above does not matter." })
+          : el("label", { class: "pg-field" }, el("span", { class: "pg-label", text: "Turn order" }), order),
       ),
       ...gameOptions,
       el("div", { class: "pg-actions" }, startButton, problemText),
@@ -446,19 +448,21 @@ export function setup(ctx: SpindleFrontendContext): () => void {
   }
 
   function renderScoreboard(view: GameView): HTMLElement {
-    const current = view.players.find((player) => player.id === view.currentPlayerId);
-    const next = view.players.find((player) => player.id === view.nextPlayerId);
+    const nameOf = (id: string | null) => view.players.find((player) => player.id === id)?.name ?? "—";
+    // Games with named roles (who asks, who answers) show those instead of now/next.
+    const turnRow = view.roles?.length
+      ? el("div", { class: "pg-turn" }, ...view.roles.map((role) => el("span", {}, role.label + ": ", el("b", { text: nameOf(role.playerId) }))))
+      : el("div", { class: "pg-turn" },
+        el("span", {}, "Now: ", el("b", { text: nameOf(view.currentPlayerId) })),
+        el("span", {}, "Next up: ", el("b", { text: nameOf(view.nextPlayerId) })),
+      );
     return el("section", { class: "pg-section", "aria-live": "polite" },
-      el("div", { class: "pg-kicker", text: view.gameName + " · Turn " + String(view.turnNumber) + " · " + view.phaseLabel }),
+      el("div", { class: "pg-kicker", text: view.gameName + " · " + (view.turnNoun ?? "Turn") + " " + String(view.turnNumber) + " · " + view.phaseLabel }),
       el("p", { class: "pg-headline", text: view.headline }),
       view.detail ? el("p", { class: "pg-detail", text: view.detail }) : null,
-      view.status === "active"
-        ? el("div", { class: "pg-turn" },
-          el("span", {}, "Now: ", el("b", { text: current?.name ?? "—" })),
-          el("span", {}, "Next up: ", el("b", { text: next?.name ?? "—" })),
-        )
-        : null,
-      view.status === "active" ? renderDirectionToggle(view) : null,
+      view.status === "active" ? turnRow : null,
+      // Only games with a fixed seat order can be reversed.
+      view.status === "active" && view.direction ? renderDirectionToggle(view) : null,
     );
   }
 
@@ -512,8 +516,8 @@ export function setup(ctx: SpindleFrontendContext): () => void {
     for (const player of view.players) {
       list.append(el("li", { class: "pg-player" + (player.current ? " current" : "") + (player.active ? "" : " out") },
         el("span", { text: player.name }),
-        player.current ? el("span", { class: "pg-badge turn", text: "Turn" }) : null,
-        player.next ? el("span", { class: "pg-badge next", text: "Next" }) : null,
+        player.current && !view.roles ? el("span", { class: "pg-badge turn", text: "Turn" }) : null,
+        player.next && !view.roles ? el("span", { class: "pg-badge next", text: "Next" }) : null,
         ...player.badges.map((badge) => el("span", { class: "pg-badge", text: badge })),
       ));
     }
@@ -586,7 +590,7 @@ export function setup(ctx: SpindleFrontendContext): () => void {
   function render(): void {
     if (destroyed) return;
     const view = state?.game?.view;
-    const subtitle = !chatId ? "No chat open" : view ? view.gameName + " · turn " + String(view.turnNumber) : "No game in this chat";
+    const subtitle = !chatId ? "No chat open" : view ? view.gameName + " · " + (view.turnNoun ?? "Turn").toLowerCase() + " " + String(view.turnNumber) : "No game in this chat";
     const children: Child[] = [
       el("header", { class: "pg-header" },
         el("div", {}, el("h2", { text: "Party Games" }), el("p", { class: "pg-muted", text: subtitle })),
