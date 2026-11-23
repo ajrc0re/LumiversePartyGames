@@ -172,3 +172,32 @@ describe("parsing", () => {
     expect(parseStoredGames(broken).session?.events).toEqual(session.events);
   });
 });
+
+describe("setup and table actions", () => {
+  test("a random turn order shuffles seats with the injected rng, keeping listed ids", () => {
+    const names = ["Ann", "Bo", "Cy", "Di", "Ed"].map((name) => ({ name, kind: "character" as const }));
+    const listed = createSession(kingsCup, names, {}, mulberry32(3), { id: "s", now: 0 });
+    const random = createSession(kingsCup, names, {}, mulberry32(3), { id: "s", now: 0, turnOrder: "random" });
+    const again = createSession(kingsCup, names, {}, mulberry32(3), { id: "s", now: 0, turnOrder: "random" });
+    expect(listed.setup.players.map((player) => player.name)).toEqual(["Ann", "Bo", "Cy", "Di", "Ed"]);
+    expect(random.setup.players.map((player) => player.name)).not.toEqual(["Ann", "Bo", "Cy", "Di", "Ed"]);
+    expect(random.setup.players).toEqual(again.setup.players);
+    expect(random.setup.players.find((player) => player.name === "Ann")?.id).toBe("p1");
+    expect((random.setup.seedState as KingsCupState).players).toEqual(random.setup.players);
+  });
+
+  test("a reversal is anchored like any action, so swiping rolls it back", () => {
+    let session = newSession();
+    session = act(session, [m("a", 0)], { type: "set_direction", choice: "reversed" });
+    expect(stateOf(session, [m("a", 0)]).turn.direction).toBe(-1);
+    expect(stateOf(session, [m("a", 1)]).turn.direction).toBe(1);
+    const undone = undoLast(kingsCup, session, new Timeline([m("a", 0)]))!;
+    expect(stateOf(undone, [m("a", 0)]).turn.direction).toBe(1);
+  });
+
+  test("parseAction keeps bounded structured data", () => {
+    expect(parseAction({ type: "set_rules", data: { rules: { "7": { title: "X" } } } }).data).toEqual({ rules: { "7": { title: "X" } } });
+    expect(parseAction({ type: "set_rules", data: ["not", "an", "object"] }).data).toBeUndefined();
+    expect(() => parseAction({ type: "set_rules", data: { blob: "x".repeat(9000) } })).toThrow("too large");
+  });
+});

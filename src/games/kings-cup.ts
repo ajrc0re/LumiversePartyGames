@@ -6,6 +6,7 @@ import {
   createCoreState,
   createDeck,
   currentPlayer,
+  directionOf,
   drawFrom,
   endGame,
   formatBlock,
@@ -15,9 +16,11 @@ import {
   playerChoices,
   playerName,
   recentLog,
+  requireActiveGame,
   requireCurrentActor,
   requirePhase,
   requireTarget,
+  turnOrderLine,
   unknownAction,
   type CoreState,
   type Deck,
@@ -59,6 +62,16 @@ export function fullDeck(): Card[] {
  */
 export const EFFECTS = ["none", "target", "mate", "make_rule", "question_master", "kings_cup"] as const;
 export type KingsCupEffect = (typeof EFFECTS)[number];
+
+/** How the rule editor describes each effect. */
+export const EFFECT_LABELS: Readonly<Record<KingsCupEffect, string>> = {
+  none: "No choice",
+  target: "Picks who drinks",
+  mate: "Picks a mate",
+  make_rule: "Adds a rule",
+  question_master: "Question Master",
+  kings_cup: "Counts toward 4th King",
+};
 
 export interface CardRule {
   title: string;
@@ -146,11 +159,15 @@ function cleanText(value: unknown, limit: number): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
 }
 
-export function normalizeRules(raw: unknown): RuleTable {
+/**
+ * A complete rule table from untrusted overrides. Missing or blank fields
+ * keep the value from `base` (the standard rules unless given).
+ */
+export function normalizeRules(raw: unknown, baseTable: Readonly<RuleTable> = DEFAULT_RULES): RuleTable {
   const source = isRecord(raw) ? raw : {};
   const table = {} as RuleTable;
   for (const rank of RANKS) {
-    const base = DEFAULT_RULES[rank];
+    const base = baseTable[rank];
     const override = isRecord(source[rank]) ? source[rank] as Record<string, unknown> : {};
     let effect = EFFECTS.includes(override.effect as KingsCupEffect) ? override.effect as KingsCupEffect : base.effect;
     // Kings always count toward the cup; nothing else can.
@@ -375,6 +392,22 @@ function apply(input: KingsCupState, action: GameAction, _rng: Rng): KingsCupSta
       advanceTurn(state, "draw");
       return state;
     }
+    case "set_rules": {
+      // Table rule edits: anyone, any phase, while the game runs.
+      requireActiveGame(state);
+      const overrides = isRecord(action.data?.rules) ? action.data.rules : null;
+      if (!overrides) throw new IllegalActionError("Send the card rules to change.");
+      const rules = normalizeRules(overrides, state.rules);
+      const changed = RANKS.filter((rank) => {
+        const before = state.rules[rank];
+        const after = rules[rank];
+        return before.title !== after.title || before.rule !== after.rule || before.effect !== after.effect;
+      });
+      if (!changed.length) throw new IllegalActionError("Those are already the card rules.");
+      state.rules = rules;
+      addLog(state, "Card rules changed: " + changed.map((rank) => rank + " (" + rules[rank].title + ")").join(", ") + ".");
+      return state;
+    }
     default:
       return unknownAction(state, PHASES, action);
   }
@@ -382,8 +415,7 @@ function apply(input: KingsCupState, action: GameAction, _rng: Rng): KingsCupSta
 
 function promptBlock(state: KingsCupState): string {
   const lines: string[] = [];
-  const names = state.players.filter((player) => player.active).map((player) => player.name);
-  lines.push("Players in turn order: " + names.join(", ") + ".");
+  lines.push(turnOrderLine(state));
   if (state.status === "ended") {
     lines.push("Game over: " + (state.endReason ?? "the game has ended.") + " No more cards are drawn.");
   } else {
@@ -431,6 +463,7 @@ function view(state: KingsCupState): GameView {
     { label: "Kings", value: String(state.kingsDrawn) + "/4" },
     { label: "Cards left", value: String(state.deck.remaining.length) },
   ];
+  if (state.turn.direction === -1) facts.push({ label: "Turn order", value: "Reversed" });
   if (state.cup.length) facts.push({ label: "King's Cup", value: joinNames(state.cup.map((id) => playerName(state, id))) });
   if (state.questionMaster) facts.push({ label: "Question Master", value: playerName(state, state.questionMaster) });
   if (state.mates.length) facts.push({ label: "Mates", value: matesLine(state) });
@@ -444,6 +477,7 @@ function view(state: KingsCupState): GameView {
     turnNumber: state.turn.number,
     phase: state.phase,
     phaseLabel: PHASES[state.phase as keyof typeof PHASES] ?? state.phase,
+    direction: directionOf(state),
     currentPlayerId: current?.id ?? null,
     nextPlayerId: next?.id ?? null,
     players: state.players.map((player) => {
@@ -468,6 +502,7 @@ function view(state: KingsCupState): GameView {
     facts,
     recent: recentLog(state, 6),
     ...(state.status === "ended" && state.endReason ? { endSummary: state.endReason } : {}),
+    cardRules: RANKS.map((rank) => ({ id: rank, label: rank, ...state.rules[rank] })),
   };
 }
 

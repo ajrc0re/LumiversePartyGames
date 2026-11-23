@@ -7,9 +7,12 @@ Play party games inside a Lumiverse chat. The extension deals the cards, tracks 
 ## How to play
 
 1. Open a chat and open the **Party Games** tab in the drawer.
-2. Pick a game. The players default to your persona and the chat's characters (group members in a group chat); rename, reorder, add, or remove seats as you like.
-3. Start the game. Use **Draw a card**, then finish the card (pick a mate, record a rule, and so on), then **Next turn**.
-4. Send messages or generate replies between actions as usual. Every generation gets a short block describing the current game state, so the model narrates the draw you made instead of inventing its own.
+2. Pick a game and list the **participants**. Leave **Include {{user}}** on to seat your persona first, then type each character's name (press Enter to add the next field). A single card that plays several characters is fine: list each of them by name.
+3. Choose the **turn order**: as listed, or random (shuffled once when the game starts).
+4. Start the game. Use **Draw a card**, then finish the card (pick a mate, record a rule, and so on), then **Next turn**.
+5. Send messages or generate replies between actions as usual. Every generation gets a short block describing the current game state, so the model narrates the draw you made instead of inventing its own.
+
+If play suddenly goes the other way, tick **Reverse turn order** under the current turn; untick it to go back. Undo and swipes cover it like any other action.
 
 Shortcuts: the **Extras** menu on the input bar has a Party Games button that performs the next step when it needs no choice (otherwise it opens the panel), and the command palette has **Party Games: Next action** and **Party Games: Undo last action**.
 
@@ -30,6 +33,11 @@ Shortcuts: the **Extras** menu on the input bar has a Party Games button that pe
 | J | Make a Rule |
 | Q | Question Master, until the next Queen |
 | K | King's Cup: the first three Kings pour into the cup; the 4th King drinks it and ends the game |
+
+These are the standard rules. Open **Card rules** to change any card's name, its rule text (`{drawer}` becomes the drawing player's name), and what it asks of the drawer: nothing, pick who drinks, pick a mate, add a rule, or become Question Master. Kings always count toward the King's Cup.
+
+- At setup, edits apply to the game you are about to start. **Save as my default** keeps them for every new Kings Cup game; **Reset to standard rules** brings the table back.
+- During a game, the same editor changes the rules from now on. The change is recorded like any action, so Undo and swipes cover it.
 
 The deck is shuffled once when the game starts and is drawn without replacement, so no card repeats. You can turn off "the 4th King ends the game" to play through the whole deck.
 

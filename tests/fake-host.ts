@@ -2,7 +2,6 @@ import type { ConditionalChatMetadataDTO } from "lumiverse-spindle-types";
 import { mulberry32 } from "../src/engine/rng";
 import type { TimelineMessage } from "../src/engine/session";
 import { CONDITIONAL_METADATA_CAPABILITY, type ChatRecord, type HostPort } from "../src/backend/service";
-import type { PartyGamesSettings } from "../src/types";
 
 /** In-memory Lumiverse stand-in for service tests and the browser harness. */
 export interface FakeChat {
@@ -14,8 +13,10 @@ export class FakeHost implements HostPort {
   chats = new Map<string, FakeChat>();
   permissions = new Set(["chats", "chat_mutation", "interceptor"]);
   capabilities = new Set([CONDITIONAL_METADATA_CAPABILITY]);
-  settings: unknown = {};
-  macroText = "Sam␞Riley␞";
+  /** userStorage stand-in, by path. */
+  storage = new Map<string, unknown>();
+  /** What {{user}} resolves to. */
+  macroText = "Sam";
   warnings: string[] = [];
   userIds: Array<string | undefined> = [];
   casCalls = 0;
@@ -68,8 +69,8 @@ export class FakeHost implements HostPort {
   }
 
   async resolveMacros(): Promise<string> { return this.macroText; }
-  async readSettings(): Promise<unknown> { return this.settings; }
-  async writeSettings(value: PartyGamesSettings): Promise<void> { this.settings = value; }
+  async readJson(path: string): Promise<unknown> { return this.storage.has(path) ? structuredClone(this.storage.get(path)) : null; }
+  async writeJson(path: string, value: unknown): Promise<void> { this.storage.set(path, structuredClone(value)); }
   newId(prefix: string): string { return prefix + String(++this.counter); }
   seed(): number { return ++this.counter; }
   rng() { return mulberry32(1234); }

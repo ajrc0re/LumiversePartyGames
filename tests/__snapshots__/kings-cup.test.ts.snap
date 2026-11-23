@@ -2,7 +2,7 @@
 
 exports[`Kings Cup prompt block draw phase 1`] = `
 "[Kings Cup — turn 1]
-Players in turn order: Sam, Riley, Alex.
+Turn order, from the current player: Sam → Riley → Alex.
 It is Sam's turn.
 Sam has not drawn a card yet.
 Kings drawn: 0/4. Cards left: 52.
@@ -12,7 +12,7 @@ This block is the authoritative game state, maintained by the game. Narrate only
 
 exports[`Kings Cup prompt block resolve phase with roles and rules 1`] = `
 "[Kings Cup — turn 5]
-Players in turn order: Sam, Riley, Alex.
+Turn order, from the current player: Riley → Alex → Sam.
 It is Riley's turn.
 Riley drew 7♠ (Heaven): Last to raise a hand drinks.
 Now: the card's rule plays out.
@@ -26,7 +26,7 @@ This block is the authoritative game state, maintained by the game. Narrate only
 
 exports[`Kings Cup prompt block pending choice and end of turn 1`] = `
 "[Kings Cup — turn 1]
-Players in turn order: Sam, Riley, Alex.
+Turn order, from the current player: Sam → Riley → Alex.
 It is Sam's turn.
 Sam drew 2♣ (You): Sam picks someone to drink.
 Resolved: Sam picked Riley to drink. Sam's turn is wrapping up.
@@ -37,8 +37,20 @@ This block is the authoritative game state, maintained by the game. Narrate only
 
 exports[`Kings Cup prompt block game over 1`] = `
 "[Kings Cup — turn 4]
-Players in turn order: Sam, Riley.
+Players: Sam, Riley.
 Game over: Riley drew the 4th King and drinks the King's Cup. No more cards are drawn.
 Kings drawn: 4/4. The King's Cup holds pours from Sam, Riley, and Sam. Cards left: 48.
+This block is the authoritative game state, maintained by the game. Narrate only what it says. Do not draw cards, pick prompts, change whose turn it is, eliminate players, or move the game to a new phase yourself; the game advances only when the players use the game controls. If an action is still pending, describe the moment and leave it pending."
+`;
+
+exports[`Kings Cup reversed play the prompt and next player follow a reversal 1`] = `
+"[Kings Cup — turn 2]
+Turn order (reversed), from the current player: Riley → Sam → Jo → Alex.
+It is Riley's turn.
+Riley has not drawn a card yet.
+Last card: Sam drew Q♥ (Question Master). Sam is now Question Master.
+Kings drawn: 0/4. Cards left: 51.
+Question Master: Sam.
+Next up: Sam.
 This block is the authoritative game state, maintained by the game. Narrate only what it says. Do not draw cards, pick prompts, change whose turn it is, eliminate players, or move the game to a new phase yourself; the game advances only when the players use the game controls. If an action is still pending, describe the moment and leave it pending."
 `;

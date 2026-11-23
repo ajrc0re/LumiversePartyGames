@@ -37,6 +37,11 @@ export interface GameAction {
   text?: string;
   /** A fixed choice such as "truth" or "dare". */
   choice?: string;
+  /**
+   * Structured, game-specific input (for example edited card rules). Bounded
+   * in size by the parser; each game validates it in `apply`.
+   */
+  data?: Record<string, unknown>;
 }
 
 export interface ActionChoice {
@@ -86,6 +91,9 @@ export interface GameEvent {
   at: number;
 }
 
+/** Seat order at setup: as the participants were listed, or shuffled. */
+export type TurnOrder = "listed" | "random";
+
 export interface GameSession {
   version: 1;
   id: string;
@@ -123,6 +131,15 @@ export interface PlayerView {
   badges: string[];
 }
 
+/** One editable per-card (or per-item) rule, for games that have a rule table. */
+export interface RuleEntryView {
+  id: string;
+  label: string;
+  title: string;
+  rule: string;
+  effect: string;
+}
+
 export interface GameFact {
   label: string;
   value: string;
@@ -136,6 +153,8 @@ export interface GameView {
   turnNumber: number;
   phase: string;
   phaseLabel: string;
+  /** "reversed" after a mid-game reversal of the turn order. */
+  direction: "forward" | "reversed";
   currentPlayerId: string | null;
   nextPlayerId: string | null;
   players: PlayerView[];
@@ -147,6 +166,8 @@ export interface GameView {
   /** Most recent log lines, newest last. */
   recent: string[];
   endSummary?: string;
+  /** The game's current rule table, when it has one that can be edited mid-game. */
+  cardRules?: RuleEntryView[];
 }
 
 export interface GameSummary {
@@ -171,6 +192,8 @@ export interface PartyGamesSettings {
 export interface ChatGameState {
   chatId: string;
   games: GameSummary[];
+  /** Per game: the user's saved default options, or the game's standard options. */
+  gameDefaults: Record<string, GameOptions>;
   settings: PartyGamesSettings;
   /** Null when no game is running in this chat. */
   game: {
@@ -184,18 +207,31 @@ export interface ChatGameState {
   warnings: string[];
 }
 
-export interface SuggestedPlayers {
-  players: PlayerInput[];
+export interface UserName {
+  /** The persona name {{user}} resolves to in this chat, or "" when unknown. */
+  name: string;
+}
+
+/** What the setup screen sends to start a game. */
+export interface StartGameInput {
+  gameId: string;
+  /** Seat the user's persona ({{user}}) first. */
+  includeUser: boolean;
+  /** Names typed in by the user, in order. */
+  participants: string[];
+  turnOrder: TurnOrder;
+  options: GameOptions;
 }
 
 export type PartyRequestAction =
   | "state"
-  | "suggest-players"
+  | "user-name"
   | "start"
   | "act"
   | "undo"
   | "end"
-  | "save-settings";
+  | "save-settings"
+  | "save-defaults";
 
 export interface PartyRequest {
   type: "party:request";

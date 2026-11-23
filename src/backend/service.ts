@@ -1,6 +1,6 @@
 import type { ConditionalChatMetadataDTO, InterceptorResultDTO, LlmMessageDTO } from "lumiverse-spindle-types";
 import { IllegalActionError, type AnyGameDefinition, type CoreState } from "../engine/core";
-import { getGame, listGames, requireGame } from "../engine/registry";
+import { getGame, listGameDefinitions, listGames, requireGame } from "../engine/registry";
 import type { Rng } from "../engine/rng";
 import {
   appendAction,
@@ -17,11 +17,13 @@ import {
 import type {
   ChatGameState,
   GameAction,
+  GameOptions,
   GameSession,
   PartyGamesSettings,
   PlayerInput,
+  StartGameInput,
   StoredChatGames,
-  SuggestedPlayers,
+  UserName,
 } from "../types";
 import { DEFAULT_SETTINGS, insertAtDepth, normalizeSettings, SETTINGS_PATH } from "./settings";
 
@@ -48,10 +50,11 @@ export interface HostPort {
   getTimeline(chatId: string): Promise<TimelineMessage[]>;
   compareAndSetMetadata(chatId: string, input: ConditionalChatMetadataDTO, userId?: string): Promise<ChatRecord | null>;
   replaceMetadata(chatId: string, metadata: Record<string, unknown>, userId?: string): Promise<void>;
-  /** Dry macro resolve, used to suggest player names. */
+  /** Dry macro resolve, used to read the persona name behind {{user}}. */
   resolveMacros(template: string, chatId: string, userId?: string): Promise<string>;
-  readSettings(userId?: string): Promise<unknown>;
-  writeSettings(value: PartyGamesSettings, userId?: string): Promise<void>;
+  /** Per-user extension storage. Missing files read as null. */
+  readJson(path: string, userId?: string): Promise<unknown>;
+  writeJson(path: string, value: unknown, userId?: string): Promise<void>;
   newId(prefix: string): string;
   seed(): number;
   rng(): Rng;
@@ -77,10 +80,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Where a user's saved default options for a game live. */
+export function defaultsPath(gameId: string): string {
+  return "defaults-" + gameId.replace(/[^a-z0-9_-]/gi, "") + ".json";
+}
+
+export const MAX_PARTICIPANTS = 15;
+
 /** One instance per user; every host call carries that user's id. */
 export class PartyGamesService {
   private readonly queues = new Map<string, Promise<unknown>>();
   private settingsCache: PartyGamesSettings | null = null;
+  private readonly defaultsCache = new Map<string, GameOptions>();
 
   constructor(
     private readonly host: HostPort,
@@ -92,7 +103,7 @@ export class PartyGamesService {
   async settings(): Promise<PartyGamesSettings> {
     if (!this.settingsCache) {
       try {
-        this.settingsCache = normalizeSettings(await this.host.readSettings(this.userId));
+        this.settingsCache = normalizeSettings(await this.host.readJson(SETTINGS_PATH, this.userId));
       } catch (error) {
         this.host.warn("settings read failed: " + errorMessage(error));
         return { ...DEFAULT_SETTINGS };
@@ -103,9 +114,39 @@ export class PartyGamesService {
 
   async saveSettings(raw: unknown): Promise<PartyGamesSettings> {
     const settings = normalizeSettings(raw);
-    await this.host.writeSettings(settings, this.userId);
+    await this.host.writeJson(SETTINGS_PATH, settings, this.userId);
     this.settingsCache = settings;
     return { ...settings };
+  }
+
+  /** The user's saved options for a game, or the game's standard options. */
+  async gameDefaults(gameId: string): Promise<GameOptions> {
+    const definition = requireGame(gameId);
+    const cached = this.defaultsCache.get(gameId);
+    if (cached) return structuredClone(cached);
+    let stored: unknown;
+    try {
+      stored = await this.host.readJson(defaultsPath(gameId), this.userId);
+    } catch (error) {
+      this.host.warn("saved defaults read failed: " + errorMessage(error));
+    }
+    const options: GameOptions = stored && typeof stored === "object" ? definition.normalizeOptions(stored) : definition.defaultOptions();
+    this.defaultsCache.set(gameId, options);
+    return structuredClone(options);
+  }
+
+  async allGameDefaults(): Promise<Record<string, GameOptions>> {
+    const entries = await Promise.all(listGameDefinitions().map(async (game) => [game.id, await this.gameDefaults(game.id)] as const));
+    return Object.fromEntries(entries);
+  }
+
+  /** Saves options (for Kings Cup, the card rules) as this user's defaults for new games. */
+  async saveDefaults(gameId: string, raw: unknown): Promise<GameOptions> {
+    const definition = requireGame(gameId);
+    const options = definition.normalizeOptions(raw);
+    await this.host.writeJson(defaultsPath(gameId), options, this.userId);
+    this.defaultsCache.set(gameId, options);
+    return structuredClone(options);
   }
 
   // ─── Reading ──────────────────────────────────────────────────────────────
@@ -153,13 +194,20 @@ export class PartyGamesService {
         };
       }
     }
-    return { chatId, games: listGames(), settings, game, warnings };
+    return { chatId, games: listGames(), gameDefaults: await this.allGameDefaults(), settings, game, warnings };
   }
 
   async state(chatId: string): Promise<ChatGameState> {
     const missing = missingPermissions(this.host);
     if (missing.length) {
-      return { chatId, games: listGames(), settings: await this.settings(), game: null, warnings: [permissionError(missing).message] };
+      return {
+        chatId,
+        games: listGames(),
+        gameDefaults: await this.allGameDefaults(),
+        settings: await this.settings(),
+        game: null,
+        warnings: [permissionError(missing).message],
+      };
     }
     const { stored, timeline } = await this.load(chatId);
     return this.buildState(chatId, stored, timeline);
@@ -174,30 +222,16 @@ export class PartyGamesService {
     return result ? result.definition.promptBlock(result.derived.state) : null;
   }
 
-  async suggestPlayers(chatId: string): Promise<SuggestedPlayers> {
-    const separator = "␞";
-    let user = "";
-    let char = "";
-    let group = "";
+  /** The persona name {{user}} resolves to in this chat, or "" when it cannot be read. */
+  async userName(chatId: string): Promise<UserName> {
     try {
-      const resolved = await this.host.resolveMacros(["{{user}}", "{{char}}", "{{group}}"].join(separator), chatId, this.userId);
-      [user = "", char = "", group = ""] = resolved.split(separator).map((part) => part.trim());
+      const name = (await this.host.resolveMacros("{{user}}", chatId, this.userId)).replace(/\s+/g, " ").trim();
+      // An unresolved macro comes back verbatim; never seat "{{user}}".
+      return { name: name.includes("{{") ? "" : name };
     } catch (error) {
-      this.host.warn("player suggestion failed: " + errorMessage(error));
+      this.host.warn("persona name lookup failed: " + errorMessage(error));
+      return { name: "" };
     }
-    const players: PlayerInput[] = [];
-    const seen = new Set<string>();
-    const add = (name: string, kind: PlayerInput["kind"]) => {
-      const clean = name.trim();
-      // Unresolved macros come back verbatim; never seat "{{char}}".
-      if (!clean || clean.includes("{{") || seen.has(clean.toLowerCase())) return;
-      seen.add(clean.toLowerCase());
-      players.push({ name: clean, kind });
-    };
-    add(user, "user");
-    const members = group.split(",").map((name) => name.trim()).filter(Boolean);
-    for (const name of members.length ? members : [char]) add(name, "character");
-    return { players };
   }
 
   // ─── Writing ──────────────────────────────────────────────────────────────
@@ -231,13 +265,29 @@ export class PartyGamesService {
     });
   }
 
-  async start(chatId: string, gameId: string, players: readonly PlayerInput[], options: unknown): Promise<ChatGameState> {
-    const definition = requireGame(gameId);
+  /**
+   * Seats the user's persona first when asked, then the typed-in participants
+   * as characters, in the order given (or shuffled for a random turn order).
+   */
+  async start(chatId: string, input: StartGameInput): Promise<ChatGameState> {
+    const definition = requireGame(input.gameId);
+    const participants = input.participants.map((name) => name.trim()).filter(Boolean);
+    if (participants.length > MAX_PARTICIPANTS) throw new IllegalActionError("A game can have at most " + String(MAX_PARTICIPANTS) + " participants besides you.");
+    const players: PlayerInput[] = participants.map((name) => ({ name, kind: "character" }));
+    if (input.includeUser) {
+      const { name } = await this.userName(chatId);
+      if (!name) throw new IllegalActionError("Could not read your persona name for {{user}}. Turn off \"Include {{user}}\" and add yourself as a participant instead.");
+      players.unshift({ name, kind: "user" });
+    }
     await this.mutate(chatId, (stored) => {
       if (stored.session && getGame(stored.session.gameId)) {
         throw new IllegalActionError("A game is already running in this chat. End it before starting another.");
       }
-      const session = createSession(definition, players, options, this.host.rng(), { id: this.host.newId("s"), now: this.host.now() });
+      const session = createSession(definition, players, input.options, this.host.rng(), {
+        id: this.host.newId("s"),
+        now: this.host.now(),
+        turnOrder: input.turnOrder,
+      });
       return { next: { version: 1, session }, result: undefined };
     });
     return this.state(chatId);

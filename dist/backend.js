@@ -36,43 +36,23 @@ function cryptoRng() {
   return { next: () => cryptoSeed() / 4294967296 };
 }
 
-// src/backend/settings.ts
-var SETTINGS_PATH = "settings.json";
-var MAX_INJECTION_DEPTH = 50;
-var DEFAULT_SETTINGS = Object.freeze({
-  autoInject: true,
-  injectionDepth: 1
-});
-function normalizeSettings(raw) {
-  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-  const depth = Number(source.injectionDepth);
-  return {
-    autoInject: typeof source.autoInject === "boolean" ? source.autoInject : DEFAULT_SETTINGS.autoInject,
-    injectionDepth: Number.isInteger(depth) ? Math.min(MAX_INJECTION_DEPTH, Math.max(0, depth)) : DEFAULT_SETTINGS.injectionDepth
-  };
-}
-function insertAtDepth(messages, value, depth) {
-  const index = Math.max(0, messages.length - Math.max(0, depth));
-  return [...messages.slice(0, index), value, ...messages.slice(index)];
-}
-
 // src/backend/requests.ts
-var MUTATING = new Set(["start", "act", "undo", "end", "save-settings"]);
+var MUTATING = new Set(["start", "act", "undo", "end"]);
 function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function parsePlayers(value) {
-  if (!Array.isArray(value))
-    return [];
-  return value.flatMap((entry) => {
-    const source = record(entry);
-    const name = typeof source.name === "string" ? source.name : "";
-    const kind = source.kind === "user" || source.kind === "character" || source.kind === "npc" ? source.kind : "npc";
-    return name.trim() ? [{ name, kind }] : [];
-  });
+function parseStartInput(input) {
+  const participants = Array.isArray(input.participants) ? input.participants.filter((name) => typeof name === "string" && name.trim().length > 0).slice(0, 32) : [];
+  return {
+    gameId: typeof input.gameId === "string" ? input.gameId : "",
+    includeUser: input.includeUser === true,
+    participants,
+    turnOrder: input.turnOrder === "random" ? "random" : "listed",
+    options: record(input.options)
+  };
 }
 async function handlePartyRequest(raw, service) {
   const request = record(raw);
@@ -94,11 +74,11 @@ async function handlePartyRequest(raw, service) {
       case "state":
         result = await service.state(requireChat());
         break;
-      case "suggest-players":
-        result = await service.suggestPlayers(requireChat());
+      case "user-name":
+        result = await service.userName(requireChat());
         break;
       case "start":
-        result = await service.start(requireChat(), String(input.gameId ?? ""), parsePlayers(input.players), input.options);
+        result = await service.start(requireChat(), parseStartInput(input));
         break;
       case "act":
         result = (await service.act(requireChat(), input.action)).state;
@@ -111,6 +91,10 @@ async function handlePartyRequest(raw, service) {
         break;
       case "save-settings":
         await service.saveSettings(input.settings);
+        result = chatId ? await service.state(chatId) : null;
+        break;
+      case "save-defaults":
+        await service.saveDefaults(typeof input.gameId === "string" ? input.gameId : "", input.options);
         result = chatId ? await service.state(chatId) : null;
         break;
       default:
@@ -217,6 +201,25 @@ function advanceTurn(state, phase) {
   state.turn.number += 1;
   state.phase = phase;
 }
+function directionOf(state) {
+  return state.turn.direction === 1 ? "forward" : "reversed";
+}
+function playOrder(state) {
+  const count = state.players.length;
+  const order = [];
+  for (let step = 0;step < count; step += 1) {
+    const index = ((state.turn.index + step * state.turn.direction) % count + count) % count;
+    const player = state.players[index];
+    if (player?.active)
+      order.push(player);
+  }
+  return order;
+}
+function turnOrderLine(state) {
+  const names = playOrder(state).map((player) => player.name);
+  const reversed = state.turn.direction === -1 ? " (reversed)" : "";
+  return state.status === "active" ? "Turn order" + reversed + ", from the current player: " + names.join(" \u2192 ") + "." : "Players: " + state.players.map((player) => player.name).join(", ") + ".";
+}
 function endGame(state, reason, winners = []) {
   state.status = "ended";
   state.phase = "game_over";
@@ -225,6 +228,26 @@ function endGame(state, reason, winners = []) {
 }
 function addLog(state, text) {
   state.log.push({ turn: state.turn.number, text });
+}
+var TABLE_ACTIONS = ["set_direction"];
+function applyTableAction(input, action) {
+  requireActiveGame(input);
+  const wanted = action.choice === "reversed" ? -1 : action.choice === "forward" ? 1 : 0;
+  if (!wanted)
+    throw new IllegalActionError('Choose "forward" or "reversed" for the turn order.');
+  if (input.turn.direction === wanted) {
+    throw new IllegalActionError("The turn order is already " + (wanted === 1 ? "forward" : "reversed") + ".");
+  }
+  const state = cloneState(input);
+  state.turn.direction = wanted;
+  const next = nextPlayer(state);
+  addLog(state, (wanted === -1 ? "Turn order reversed." : "Turn order back to normal.") + (next ? " Next up: " + next.name + "." : ""));
+  return state;
+}
+function applyAction(definition, state, action, rng) {
+  if (TABLE_ACTIONS.includes(action.type))
+    return applyTableAction(state, action);
+  return definition.apply(state, action, rng);
 }
 function cloneState(state) {
   return structuredClone(state);
@@ -331,11 +354,11 @@ function isRecord(value) {
 function cleanText(value, limit) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
 }
-function normalizeRules(raw) {
+function normalizeRules(raw, baseTable = DEFAULT_RULES) {
   const source = isRecord(raw) ? raw : {};
   const table = {};
   for (const rank of RANKS) {
-    const base = DEFAULT_RULES[rank];
+    const base = baseTable[rank];
     const override = isRecord(source[rank]) ? source[rank] : {};
     let effect = EFFECTS.includes(override.effect) ? override.effect : base.effect;
     if (rank === "K")
@@ -546,14 +569,30 @@ function apply(input, action, _rng) {
       advanceTurn(state, "draw");
       return state;
     }
+    case "set_rules": {
+      requireActiveGame(state);
+      const overrides = isRecord(action.data?.rules) ? action.data.rules : null;
+      if (!overrides)
+        throw new IllegalActionError("Send the card rules to change.");
+      const rules = normalizeRules(overrides, state.rules);
+      const changed = RANKS.filter((rank) => {
+        const before = state.rules[rank];
+        const after = rules[rank];
+        return before.title !== after.title || before.rule !== after.rule || before.effect !== after.effect;
+      });
+      if (!changed.length)
+        throw new IllegalActionError("Those are already the card rules.");
+      state.rules = rules;
+      addLog(state, "Card rules changed: " + changed.map((rank) => rank + " (" + rules[rank].title + ")").join(", ") + ".");
+      return state;
+    }
     default:
       return unknownAction(state, PHASES, action);
   }
 }
 function promptBlock(state) {
   const lines = [];
-  const names = state.players.filter((player) => player.active).map((player) => player.name);
-  lines.push("Players in turn order: " + names.join(", ") + ".");
+  lines.push(turnOrderLine(state));
   if (state.status === "ended") {
     lines.push("Game over: " + (state.endReason ?? "the game has ended.") + " No more cards are drawn.");
   } else {
@@ -604,6 +643,8 @@ function view(state) {
     { label: "Kings", value: String(state.kingsDrawn) + "/4" },
     { label: "Cards left", value: String(state.deck.remaining.length) }
   ];
+  if (state.turn.direction === -1)
+    facts.push({ label: "Turn order", value: "Reversed" });
   if (state.cup.length)
     facts.push({ label: "King's Cup", value: joinNames(state.cup.map((id) => playerName(state, id))) });
   if (state.questionMaster)
@@ -620,6 +661,7 @@ function view(state) {
     turnNumber: state.turn.number,
     phase: state.phase,
     phaseLabel: PHASES[state.phase] ?? state.phase,
+    direction: directionOf(state),
     currentPlayerId: current?.id ?? null,
     nextPlayerId: next?.id ?? null,
     players: state.players.map((player) => {
@@ -646,7 +688,8 @@ function view(state) {
     ...detail ? { detail } : {},
     facts,
     recent: recentLog(state, 6),
-    ...state.status === "ended" && state.endReason ? { endSummary: state.endReason } : {}
+    ...state.status === "ended" && state.endReason ? { endSummary: state.endReason } : {},
+    cardRules: RANKS.map((rank) => ({ id: rank, label: rank, ...state.rules[rank] }))
   };
 }
 var kingsCup = {
@@ -670,6 +713,9 @@ var PLANNED = [
   { id: "never_have_i_ever", name: "Never Have I Ever", description: "Take turns confessing; lose a life for everything you have done.", minPlayers: 2, available: false },
   { id: "truth_or_dare", name: "Truth or Dare", description: "Pick truth or dare and face a prompt from the pool.", minPlayers: 2, available: false }
 ];
+function listGameDefinitions() {
+  return GAMES;
+}
 function getGame(id) {
   return GAMES.find((game) => game.id === id);
 }
@@ -694,6 +740,7 @@ function listGames() {
 
 // src/engine/session.ts
 var MAX_EVENTS = 2000;
+var MAX_ACTION_DATA = 8000;
 
 class Timeline {
   swipes = new Map;
@@ -739,7 +786,7 @@ function replay(definition, session, events) {
   const applied = [];
   for (const event of events) {
     try {
-      state = definition.apply(state, event.action, mulberry32(event.seed));
+      state = applyAction(definition, state, event.action, mulberry32(event.seed));
       applied.push(event);
     } catch (error) {
       return {
@@ -756,7 +803,8 @@ function deriveGame(definition, session, timeline) {
   return replay(definition, session, activeChain(session, timeline));
 }
 function createSession(definition, players, rawOptions, rng, meta) {
-  const seated = createPlayers(players);
+  const listed = createPlayers(players);
+  const seated = meta.turnOrder === "random" ? shuffle(listed, rng) : listed;
   const options = definition.normalizeOptions(rawOptions);
   const seedState = definition.setup(seated, options, rng);
   return {
@@ -773,7 +821,7 @@ function appendAction(definition, session, timeline, action, meta) {
     throw new IllegalActionError("This game has reached its limit of " + String(MAX_EVENTS) + " recorded actions. Start a new game.");
   }
   const current = deriveGame(definition, session, timeline);
-  const state = definition.apply(current.state, action, mulberry32(meta.seed));
+  const state = applyAction(definition, current.state, action, mulberry32(meta.seed));
   const event = {
     id: meta.id,
     parent: current.head?.id ?? null,
@@ -819,6 +867,12 @@ function parseAction(raw) {
     action.text = text;
   if (choice)
     action.choice = choice;
+  if (isRecord2(source.data)) {
+    const serialized = JSON.stringify(source.data);
+    if (serialized.length > MAX_ACTION_DATA)
+      throw new IllegalActionError("That change is too large to record.");
+    action.data = JSON.parse(serialized);
+  }
   if (Array.isArray(source.players)) {
     action.players = [...new Set(source.players.filter((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 40))].slice(0, 32);
   }
@@ -884,6 +938,26 @@ function parseStoredGames(value) {
   };
 }
 
+// src/backend/settings.ts
+var SETTINGS_PATH = "settings.json";
+var MAX_INJECTION_DEPTH = 50;
+var DEFAULT_SETTINGS = Object.freeze({
+  autoInject: true,
+  injectionDepth: 1
+});
+function normalizeSettings(raw) {
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const depth = Number(source.injectionDepth);
+  return {
+    autoInject: typeof source.autoInject === "boolean" ? source.autoInject : DEFAULT_SETTINGS.autoInject,
+    injectionDepth: Number.isInteger(depth) ? Math.min(MAX_INJECTION_DEPTH, Math.max(0, depth)) : DEFAULT_SETTINGS.injectionDepth
+  };
+}
+function insertAtDepth(messages, value, depth) {
+  const index = Math.max(0, messages.length - Math.max(0, depth));
+  return [...messages.slice(0, index), value, ...messages.slice(index)];
+}
+
 // src/backend/service.ts
 var METADATA_KEY = "lumiverse_party_games";
 var CONDITIONAL_METADATA_CAPABILITY = "chat-conditional-metadata-v1";
@@ -898,12 +972,17 @@ function permissionError(missing) {
 function errorMessage2(error) {
   return error instanceof Error ? error.message : String(error);
 }
+function defaultsPath(gameId) {
+  return "defaults-" + gameId.replace(/[^a-z0-9_-]/gi, "") + ".json";
+}
+var MAX_PARTICIPANTS = 15;
 
 class PartyGamesService {
   host;
   userId;
   queues = new Map;
   settingsCache = null;
+  defaultsCache = new Map;
   constructor(host, userId) {
     this.host = host;
     this.userId = userId;
@@ -911,7 +990,7 @@ class PartyGamesService {
   async settings() {
     if (!this.settingsCache) {
       try {
-        this.settingsCache = normalizeSettings(await this.host.readSettings(this.userId));
+        this.settingsCache = normalizeSettings(await this.host.readJson(SETTINGS_PATH, this.userId));
       } catch (error) {
         this.host.warn("settings read failed: " + errorMessage2(error));
         return { ...DEFAULT_SETTINGS };
@@ -921,9 +1000,35 @@ class PartyGamesService {
   }
   async saveSettings(raw) {
     const settings = normalizeSettings(raw);
-    await this.host.writeSettings(settings, this.userId);
+    await this.host.writeJson(SETTINGS_PATH, settings, this.userId);
     this.settingsCache = settings;
     return { ...settings };
+  }
+  async gameDefaults(gameId) {
+    const definition = requireGame(gameId);
+    const cached = this.defaultsCache.get(gameId);
+    if (cached)
+      return structuredClone(cached);
+    let stored;
+    try {
+      stored = await this.host.readJson(defaultsPath(gameId), this.userId);
+    } catch (error) {
+      this.host.warn("saved defaults read failed: " + errorMessage2(error));
+    }
+    const options = stored && typeof stored === "object" ? definition.normalizeOptions(stored) : definition.defaultOptions();
+    this.defaultsCache.set(gameId, options);
+    return structuredClone(options);
+  }
+  async allGameDefaults() {
+    const entries = await Promise.all(listGameDefinitions().map(async (game) => [game.id, await this.gameDefaults(game.id)]));
+    return Object.fromEntries(entries);
+  }
+  async saveDefaults(gameId, raw) {
+    const definition = requireGame(gameId);
+    const options = definition.normalizeOptions(raw);
+    await this.host.writeJson(defaultsPath(gameId), options, this.userId);
+    this.defaultsCache.set(gameId, options);
+    return structuredClone(options);
   }
   serial(chatId, task) {
     const previous = this.queues.get(chatId) ?? Promise.resolve();
@@ -975,12 +1080,19 @@ class PartyGamesService {
         };
       }
     }
-    return { chatId, games: listGames(), settings, game, warnings };
+    return { chatId, games: listGames(), gameDefaults: await this.allGameDefaults(), settings, game, warnings };
   }
   async state(chatId) {
     const missing = missingPermissions(this.host);
     if (missing.length) {
-      return { chatId, games: listGames(), settings: await this.settings(), game: null, warnings: [permissionError(missing).message] };
+      return {
+        chatId,
+        games: listGames(),
+        gameDefaults: await this.allGameDefaults(),
+        settings: await this.settings(),
+        game: null,
+        warnings: [permissionError(missing).message]
+      };
     }
     const { stored, timeline } = await this.load(chatId);
     return this.buildState(chatId, stored, timeline);
@@ -994,31 +1106,14 @@ class PartyGamesService {
     const result = this.derive(stored.session, timeline);
     return result ? result.definition.promptBlock(result.derived.state) : null;
   }
-  async suggestPlayers(chatId) {
-    const separator = "\u241E";
-    let user = "";
-    let char = "";
-    let group = "";
+  async userName(chatId) {
     try {
-      const resolved = await this.host.resolveMacros(["{{user}}", "{{char}}", "{{group}}"].join(separator), chatId, this.userId);
-      [user = "", char = "", group = ""] = resolved.split(separator).map((part) => part.trim());
+      const name = (await this.host.resolveMacros("{{user}}", chatId, this.userId)).replace(/\s+/g, " ").trim();
+      return { name: name.includes("{{") ? "" : name };
     } catch (error) {
-      this.host.warn("player suggestion failed: " + errorMessage2(error));
+      this.host.warn("persona name lookup failed: " + errorMessage2(error));
+      return { name: "" };
     }
-    const players = [];
-    const seen = new Set;
-    const add = (name, kind) => {
-      const clean = name.trim();
-      if (!clean || clean.includes("{{") || seen.has(clean.toLowerCase()))
-        return;
-      seen.add(clean.toLowerCase());
-      players.push({ name: clean, kind });
-    };
-    add(user, "user");
-    const members = group.split(",").map((name) => name.trim()).filter(Boolean);
-    for (const name of members.length ? members : [char])
-      add(name, "character");
-    return { players };
   }
   async mutate(chatId, change) {
     return this.serial(chatId, async () => {
@@ -1041,13 +1136,27 @@ class PartyGamesService {
       throw new Error("The chat kept changing while the game was saving. Try again.");
     });
   }
-  async start(chatId, gameId, players, options) {
-    const definition = requireGame(gameId);
+  async start(chatId, input) {
+    const definition = requireGame(input.gameId);
+    const participants = input.participants.map((name) => name.trim()).filter(Boolean);
+    if (participants.length > MAX_PARTICIPANTS)
+      throw new IllegalActionError("A game can have at most " + String(MAX_PARTICIPANTS) + " participants besides you.");
+    const players = participants.map((name) => ({ name, kind: "character" }));
+    if (input.includeUser) {
+      const { name } = await this.userName(chatId);
+      if (!name)
+        throw new IllegalActionError('Could not read your persona name for {{user}}. Turn off "Include {{user}}" and add yourself as a participant instead.');
+      players.unshift({ name, kind: "user" });
+    }
     await this.mutate(chatId, (stored) => {
       if (stored.session && getGame(stored.session.gameId)) {
         throw new IllegalActionError("A game is already running in this chat. End it before starting another.");
       }
-      const session = createSession(definition, players, options, this.host.rng(), { id: this.host.newId("s"), now: this.host.now() });
+      const session = createSession(definition, players, input.options, this.host.rng(), {
+        id: this.host.newId("s"),
+        now: this.host.now(),
+        turnOrder: input.turnOrder
+      });
       return { next: { version: 1, session }, result: undefined };
     });
     return this.state(chatId);
@@ -1152,8 +1261,8 @@ var host = {
     const { text } = await spindle.macros.resolve(template, { chatId, commit: false, ...userId ? { userId } : {} });
     return text;
   },
-  readSettings: (userId) => spindle.userStorage.getJson(SETTINGS_PATH, { fallback: {}, ...userId ? { userId } : {} }),
-  writeSettings: (value, userId) => spindle.userStorage.setJson(SETTINGS_PATH, value, userId ? { userId } : {}),
+  readJson: (path, userId) => spindle.userStorage.getJson(path, { fallback: null, ...userId ? { userId } : {} }),
+  writeJson: (path, value, userId) => spindle.userStorage.setJson(path, value, userId ? { userId } : {}),
   newId: (prefix) => prefix + Date.now().toString(36) + (++idCounter).toString(36) + cryptoSeed().toString(36),
   seed: cryptoSeed,
   rng: cryptoRng,

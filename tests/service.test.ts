@@ -1,15 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import type { InterceptorResultDTO, LlmMessageDTO } from "lumiverse-spindle-types";
 import { handlePartyRequest } from "../src/backend/requests";
-import { METADATA_KEY, PartyGamesService } from "../src/backend/service";
+import { defaultsPath, METADATA_KEY, PartyGamesService } from "../src/backend/service";
+import { DEFAULT_RULES } from "../src/games/kings-cup";
+import type { StartGameInput } from "../src/types";
 import { FakeHost } from "./fake-host";
 
-const PLAYERS = [{ name: "Sam", kind: "user" as const }, { name: "Riley", kind: "character" as const }];
+/** {{user}} (Sam) plus Riley, as listed. */
+const START: StartGameInput = { gameId: "kings_cup", includeUser: true, participants: ["Riley"], turnOrder: "listed", options: {} };
 
 async function started(host = new FakeHost(), userId?: string) {
   const chat = host.addChat("c1");
   const service = new PartyGamesService(host, userId);
-  await service.start("c1", "kings_cup", PLAYERS, {});
+  await service.start("c1", START);
   return { host, chat, service };
 }
 
@@ -27,7 +30,7 @@ describe("PartyGamesService", () => {
 
   test("refuses to start a second game", async () => {
     const { service } = await started();
-    await expect(service.start("c1", "kings_cup", PLAYERS, {})).rejects.toThrow("already running");
+    await expect(service.start("c1", START)).rejects.toThrow("already running");
   });
 
   test("applies actions and reports the newest log line", async () => {
@@ -116,18 +119,55 @@ describe("PartyGamesService", () => {
     expect(state.warnings[0]).toContain("chat_mutation");
   });
 
-  test("suggests the persona and characters as players", async () => {
+  test("seats {{user}} first, then the typed-in participants as characters", async () => {
+    const host = new FakeHost();
+    host.macroText = "  Sam  ";
+    host.addChat("c1");
+    const service = new PartyGamesService(host);
+    expect(await service.userName("c1")).toEqual({ name: "Sam" });
+    const state = await service.start("c1", { ...START, participants: [" Riley ", "", "Alex"] });
+    expect(state.game?.view.players.map((player) => [player.name, player.kind])).toEqual([
+      ["Sam", "user"],
+      ["Riley", "character"],
+      ["Alex", "character"],
+    ]);
+  });
+
+  test("leaves {{user}} out when the toggle is off", async () => {
+    const host = new FakeHost();
+    host.addChat("c1");
+    const state = await new PartyGamesService(host).start("c1", { ...START, includeUser: false, participants: ["Riley", "Alex"] });
+    expect(state.game?.view.players.map((player) => player.name)).toEqual(["Riley", "Alex"]);
+  });
+
+  test("refuses to seat an unresolved {{user}}", async () => {
+    const host = new FakeHost();
+    host.macroText = "{{user}}";
+    host.addChat("c1");
+    const service = new PartyGamesService(host);
+    expect(await service.userName("c1")).toEqual({ name: "" });
+    await expect(service.start("c1", START)).rejects.toThrow("Could not read your persona name");
+  });
+
+  test("a random turn order shuffles the seats once, at the start", async () => {
+    const host = new FakeHost();
+    host.addChat("c1");
+    const participants = ["Ann", "Bo", "Cy", "Di", "Ed", "Flo"];
+    const state = await new PartyGamesService(host).start("c1", { ...START, includeUser: false, participants, turnOrder: "random" });
+    const seated = state.game!.view.players.map((player) => player.name);
+    expect([...seated].sort()).toEqual(participants);
+    expect(seated).not.toEqual(participants);
+  });
+
+  test("saved defaults seed new games and survive a new service instance", async () => {
     const host = new FakeHost();
     host.addChat("c1");
     const service = new PartyGamesService(host);
-    expect((await service.suggestPlayers("c1")).players).toEqual([
-      { name: "Sam", kind: "user" },
-      { name: "Riley", kind: "character" },
-    ]);
-    host.macroText = "Sam␞Alex␞Alex, Jo, sam";
-    expect((await service.suggestPlayers("c1")).players.map((player) => player.name)).toEqual(["Sam", "Alex", "Jo"]);
-    host.macroText = "{{user}}␞{{char}}␞";
-    expect((await service.suggestPlayers("c1")).players).toEqual([]);
+    expect((await service.state("c1")).gameDefaults.kings_cup).toMatchObject({ endOnFourthKing: true, rules: { "7": DEFAULT_RULES["7"] } });
+    await service.saveDefaults("kings_cup", { rules: { "7": { title: "Thumb War", rule: "Loser drinks." } }, endOnFourthKing: false });
+    expect(host.storage.get(defaultsPath("kings_cup"))).toMatchObject({ endOnFourthKing: false });
+    const fresh = await new PartyGamesService(host).state("c1");
+    expect(fresh.gameDefaults.kings_cup).toMatchObject({ endOnFourthKing: false, rules: { "7": { title: "Thumb War", rule: "Loser drinks.", effect: "none" } } });
   });
 });
 
@@ -192,12 +232,12 @@ describe("frontend request routing", () => {
       type: "party:request",
       requestId: "r2",
       action: "start",
-      input: { chatId: "c1", gameId: "kings_cup", players: [{ name: "Sam", kind: "user" }, { name: "Riley" }, { name: "  " }, 5] },
+      input: { chatId: "c1", gameId: "kings_cup", includeUser: true, participants: ["Riley", "  ", 5, "Alex"], turnOrder: "sideways" },
     }, service);
     expect(start.reply?.error).toBeUndefined();
     expect(start.changed).toEqual({ type: "party:changed", chatId: "c1", reason: "start" });
     const players = (start.reply?.result as { game: { view: { players: Array<{ name: string; kind: string }> } } }).game.view.players;
-    expect(players.map((player) => [player.name, player.kind])).toEqual([["Sam", "user"], ["Riley", "npc"]]);
+    expect(players.map((player) => [player.name, player.kind])).toEqual([["Sam", "user"], ["Riley", "character"], ["Alex", "character"]]);
   });
 
   test("turns failures into error replies and ignores foreign payloads", async () => {

@@ -186,6 +186,31 @@ export function reverseDirection(state: CoreState): void {
   state.turn.direction = state.turn.direction === 1 ? -1 : 1;
 }
 
+export function directionOf(state: CoreState): "forward" | "reversed" {
+  return state.turn.direction === 1 ? "forward" : "reversed";
+}
+
+/** Active players in the order they will play, starting with whoever's turn it is. */
+export function playOrder(state: CoreState): Player[] {
+  const count = state.players.length;
+  const order: Player[] = [];
+  for (let step = 0; step < count; step += 1) {
+    const index = (((state.turn.index + step * state.turn.direction) % count) + count) % count;
+    const player = state.players[index];
+    if (player?.active) order.push(player);
+  }
+  return order;
+}
+
+/** One prompt line naming the play order, flagged when it has been reversed. */
+export function turnOrderLine(state: CoreState): string {
+  const names = playOrder(state).map((player) => player.name);
+  const reversed = state.turn.direction === -1 ? " (reversed)" : "";
+  return state.status === "active"
+    ? "Turn order" + reversed + ", from the current player: " + names.join(" → ") + "."
+    : "Players: " + state.players.map((player) => player.name).join(", ") + ".";
+}
+
 export function skipNext(state: CoreState, count = 1): void {
   state.turn.skips += Math.max(0, count);
 }
@@ -204,6 +229,36 @@ export function endGame(state: CoreState, reason: string, winners: string[] = []
 
 export function addLog(state: CoreState, text: string): void {
   state.log.push({ turn: state.turn.number, text });
+}
+
+// ─── Table actions (every game) ─────────────────────────────────────────────
+
+/**
+ * Actions any player can take in any phase of any game, handled here so game
+ * modules do not repeat them:
+ * - set_direction (choice "forward" | "reversed"): the turn order changes
+ *   direction, e.g. when the group decides play goes the other way.
+ */
+export const TABLE_ACTIONS: readonly string[] = ["set_direction"];
+
+function applyTableAction<S extends CoreState>(input: S, action: GameAction): S {
+  requireActiveGame(input);
+  const wanted = action.choice === "reversed" ? -1 : action.choice === "forward" ? 1 : 0;
+  if (!wanted) throw new IllegalActionError('Choose "forward" or "reversed" for the turn order.');
+  if (input.turn.direction === wanted) {
+    throw new IllegalActionError("The turn order is already " + (wanted === 1 ? "forward" : "reversed") + ".");
+  }
+  const state = cloneState(input);
+  state.turn.direction = wanted;
+  const next = nextPlayer(state);
+  addLog(state, (wanted === -1 ? "Turn order reversed." : "Turn order back to normal.") + (next ? " Next up: " + next.name + "." : ""));
+  return state;
+}
+
+/** Applies a table action or delegates to the game. The only entry point replays use. */
+export function applyAction<S extends CoreState>(definition: GameDefinition<S, any>, state: S, action: GameAction, rng: Rng): S {
+  if (TABLE_ACTIONS.includes(action.type)) return applyTableAction(state, action);
+  return definition.apply(state, action, rng);
 }
 
 // ─── Phase machine ──────────────────────────────────────────────────────────

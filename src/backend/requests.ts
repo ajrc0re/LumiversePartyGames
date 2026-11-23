@@ -1,7 +1,8 @@
-import type { PartyChanged, PartyReply, PartyRequestAction, PlayerInput } from "../types";
+import type { PartyChanged, PartyReply, PartyRequestAction, StartGameInput } from "../types";
 import type { PartyGamesService } from "./service";
 
-const MUTATING: ReadonlySet<PartyRequestAction> = new Set(["start", "act", "undo", "end", "save-settings"]);
+/** Requests that change a chat's game, so other open panels should refresh. */
+const MUTATING: ReadonlySet<PartyRequestAction> = new Set(["start", "act", "undo", "end"]);
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -11,14 +12,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function parsePlayers(value: unknown): PlayerInput[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    const source = record(entry);
-    const name = typeof source.name === "string" ? source.name : "";
-    const kind = source.kind === "user" || source.kind === "character" || source.kind === "npc" ? source.kind : "npc";
-    return name.trim() ? [{ name, kind }] : [];
-  });
+/** Reads the setup screen's start request; unknown or mistyped fields fall back to safe values. */
+export function parseStartInput(input: Record<string, unknown>): StartGameInput {
+  const participants = Array.isArray(input.participants)
+    ? input.participants.filter((name): name is string => typeof name === "string" && name.trim().length > 0).slice(0, 32)
+    : [];
+  return {
+    gameId: typeof input.gameId === "string" ? input.gameId : "",
+    includeUser: input.includeUser === true,
+    participants,
+    turnOrder: input.turnOrder === "random" ? "random" : "listed",
+    options: record(input.options),
+  };
 }
 
 export interface RequestOutcome {
@@ -48,11 +53,11 @@ export async function handlePartyRequest(raw: unknown, service: PartyGamesServic
       case "state":
         result = await service.state(requireChat());
         break;
-      case "suggest-players":
-        result = await service.suggestPlayers(requireChat());
+      case "user-name":
+        result = await service.userName(requireChat());
         break;
       case "start":
-        result = await service.start(requireChat(), String(input.gameId ?? ""), parsePlayers(input.players), input.options);
+        result = await service.start(requireChat(), parseStartInput(input));
         break;
       case "act":
         result = (await service.act(requireChat(), input.action)).state;
@@ -65,6 +70,10 @@ export async function handlePartyRequest(raw: unknown, service: PartyGamesServic
         break;
       case "save-settings":
         await service.saveSettings(input.settings);
+        result = chatId ? await service.state(chatId) : null;
+        break;
+      case "save-defaults":
+        await service.saveDefaults(typeof input.gameId === "string" ? input.gameId : "", input.options);
         result = chatId ? await service.state(chatId) : null;
         break;
       default:

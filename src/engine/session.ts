@@ -5,9 +5,10 @@ import type {
   GameSession,
   PlayerInput,
   StoredChatGames,
+  TurnOrder,
 } from "../types";
-import { cloneState, createPlayers, IllegalActionError, type AnyGameDefinition, type CoreState } from "./core";
-import { mulberry32, type Rng } from "./rng";
+import { applyAction, cloneState, createPlayers, IllegalActionError, type AnyGameDefinition, type CoreState } from "./core";
+import { mulberry32, shuffle, type Rng } from "./rng";
 
 /**
  * Swipe-safe game history.
@@ -27,6 +28,8 @@ import { mulberry32, type Rng } from "./rng";
  */
 
 export const MAX_EVENTS = 2000;
+/** Upper bound on an action's serialized `data`, to keep chat metadata small. */
+export const MAX_ACTION_DATA = 8000;
 
 // ─── Timeline ───────────────────────────────────────────────────────────────
 
@@ -98,7 +101,7 @@ export function replay<S extends CoreState>(definition: AnyGameDefinition, sessi
   const applied: GameEvent[] = [];
   for (const event of events) {
     try {
-      state = definition.apply(state, event.action, mulberry32(event.seed)) as S;
+      state = applyAction(definition, state, event.action, mulberry32(event.seed)) as S;
       applied.push(event);
     } catch (error) {
       return {
@@ -123,9 +126,11 @@ export function createSession(
   players: readonly PlayerInput[],
   rawOptions: unknown,
   rng: Rng,
-  meta: { id: string; now: number },
+  meta: { id: string; now: number; turnOrder?: TurnOrder },
 ): GameSession {
-  const seated = createPlayers(players);
+  // Ids follow the listed order; a random turn order only changes the seating.
+  const listed = createPlayers(players);
+  const seated = meta.turnOrder === "random" ? shuffle(listed, rng) : listed;
   const options = definition.normalizeOptions(rawOptions);
   const seedState = definition.setup(seated, options, rng);
   return {
@@ -156,7 +161,7 @@ export function appendAction<S extends CoreState>(
     throw new IllegalActionError("This game has reached its limit of " + String(MAX_EVENTS) + " recorded actions. Start a new game.");
   }
   const current = deriveGame<S>(definition, session, timeline);
-  const state = definition.apply(current.state, action, mulberry32(meta.seed)) as S;
+  const state = applyAction(definition, current.state, action, mulberry32(meta.seed)) as S;
   const event: GameEvent = {
     id: meta.id,
     parent: current.head?.id ?? null,
@@ -206,6 +211,11 @@ export function parseAction(raw: unknown): GameAction {
   if (target) action.target = target;
   if (text !== undefined && text.trim()) action.text = text;
   if (choice) action.choice = choice;
+  if (isRecord(source.data)) {
+    const serialized = JSON.stringify(source.data);
+    if (serialized.length > MAX_ACTION_DATA) throw new IllegalActionError("That change is too large to record.");
+    action.data = JSON.parse(serialized) as Record<string, unknown>;
+  }
   if (Array.isArray(source.players)) {
     action.players = [...new Set(source.players.filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length <= 40))].slice(0, 32);
   }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { IllegalActionError } from "../src/engine/core";
+import { applyAction, currentPlayer, IllegalActionError } from "../src/engine/core";
+import { mulberry32 } from "../src/engine/rng";
 import { cardLabel, DEFAULT_RULES, kingsCup, normalizeRules } from "../src/games/kings-cup";
 import { act, kingsCupGame, playTurn, resolveFor, stackDeck } from "./helpers";
 
@@ -206,5 +207,64 @@ describe("Kings Cup view", () => {
     expect(view.players.find((player) => player.id === "p1")?.badges).toEqual(["Question Master"]);
     expect(view.players.find((player) => player.id === "p3")?.badges).toEqual(["Mate: Riley"]);
     expect(view.facts.find((fact) => fact.label === "Cards left")?.value).toBe("50");
+  });
+});
+
+describe("Kings Cup mid-game rule edits", () => {
+  test("set_rules changes only the cards sent, keeping the rest", () => {
+    let state = kingsCupGame();
+    state = act(state, { type: "set_rules", data: { rules: { "7": { title: "Thumb War", rule: "{drawer} starts a thumb war; loser drinks." }, "3": { effect: "target" } } } });
+    expect(state.rules["7"]).toEqual({ title: "Thumb War", rule: "{drawer} starts a thumb war; loser drinks.", effect: "none" });
+    expect(state.rules["3"]).toEqual({ ...DEFAULT_RULES["3"], effect: "target" });
+    expect(state.rules["9"]).toEqual(DEFAULT_RULES["9"]);
+    expect(state.log.at(-1)?.text).toBe("Card rules changed: 3 (Me), 7 (Thumb War).");
+    expect(state.phase).toBe("draw");
+  });
+
+  test("an edit builds on earlier edits, not the standard rules", () => {
+    let state = kingsCupGame();
+    state = act(state, { type: "set_rules", data: { rules: { "7": { title: "Thumb War", rule: "Loser drinks." } } } });
+    state = act(state, { type: "set_rules", data: { rules: { "7": { effect: "target" } } } });
+    expect(state.rules["7"]).toEqual({ title: "Thumb War", rule: "Loser drinks.", effect: "target" });
+  });
+
+  test("works in any phase and changes how the drawn card resolves", () => {
+    let state = stackDeck(kingsCupGame(), ["7"]);
+    state = act(state, { type: "draw" });
+    expect(kingsCup.legalActions(state)[0]?.fields).toBeUndefined();
+    state = act(state, { type: "set_rules", data: { rules: { "7": { effect: "target" } } } });
+    expect(kingsCup.legalActions(state)[0]?.fields?.[0]?.name).toBe("target");
+    expect(kingsCup.promptBlock(state)).toContain("Waiting for Sam to pick who drinks.");
+  });
+
+  test("rejects empty, unchanged, and post-game edits; Kings stay King's Cup", () => {
+    const state = kingsCupGame();
+    expect(() => act(state, { type: "set_rules" })).toThrow("Send the card rules");
+    expect(() => act(state, { type: "set_rules", data: { rules: { "7": DEFAULT_RULES["7"] } } })).toThrow("already the card rules");
+    expect(() => act(state, { type: "set_rules", data: { rules: { K: { effect: "none" } } } })).toThrow("already the card rules");
+    const ended = { ...state, status: "ended" as const };
+    expect(() => act(ended, { type: "set_rules", data: { rules: { "7": { title: "X" } } } })).toThrow("game is over");
+  });
+
+  test("the view exposes the current rule table for the editor", () => {
+    const view = kingsCup.view(kingsCupGame());
+    expect(view.cardRules?.map((entry) => entry.id)).toEqual(["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]);
+    expect(view.cardRules?.[12]).toEqual({ id: "K", label: "K", ...DEFAULT_RULES.K });
+    expect(view.direction).toBe("forward");
+  });
+});
+
+describe("Kings Cup reversed play", () => {
+  test("the prompt and next player follow a reversal", () => {
+    let state = kingsCupGame(["Sam", "Riley", "Alex", "Jo"]);
+    state = playTurn(state); // Sam -> Riley
+    state = applyAction(kingsCup, state, { type: "set_direction", choice: "reversed" }, mulberry32(0));
+    expect(kingsCup.view(state).nextPlayerId).toBe("p1");
+    expect(kingsCup.view(state).facts).toContainEqual({ label: "Turn order", value: "Reversed" });
+    expect(kingsCup.promptBlock(state)).toMatchSnapshot();
+    state = playTurn(state);
+    expect(currentPlayer(state).name).toBe("Sam");
+    state = playTurn(state);
+    expect(currentPlayer(state).name).toBe("Jo");
   });
 });

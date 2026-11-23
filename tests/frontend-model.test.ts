@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { buildAction, inputBarModel, missingField, needsInput, primaryAction, requestIdFactory, setupProblem } from "../src/frontend-model";
+import {
+  buildAction,
+  changedRules,
+  inputBarModel,
+  missingField,
+  needsInput,
+  primaryAction,
+  requestIdFactory,
+  seatCount,
+  setupProblem,
+  startInput,
+  type SetupDraft,
+} from "../src/frontend-model";
 import type { ActionDef, ChatGameState, GameView } from "../src/types";
 
 const view: GameView = {
@@ -9,6 +21,7 @@ const view: GameView = {
   turnNumber: 3,
   phase: "resolve",
   phaseLabel: "resolve",
+  direction: "forward",
   currentPlayerId: "p1",
   nextPlayerId: "p2",
   players: [
@@ -24,6 +37,7 @@ function stateWith(actions: ActionDef[]): ChatGameState {
   return {
     chatId: "c1",
     games: [],
+    gameDefaults: {},
     settings: { autoInject: true, injectionDepth: 1 },
     game: { sessionId: "s1", view, actions, canUndo: true, prompt: "" },
     warnings: [],
@@ -71,12 +85,37 @@ describe("frontend model", () => {
     expect(buildAction({ type: "choose", label: "Truth", preset: { choice: "truth" } })).toEqual({ type: "choose", choice: "truth" });
   });
 
-  test("setup validation", () => {
+  test("setup counts {{user}} plus named participants", () => {
     const game = { id: "kings_cup", name: "Kings Cup", description: "", minPlayers: 2, available: true };
-    expect(setupProblem(undefined, [])).toBe("Choose a game.");
-    expect(setupProblem({ ...game, available: false }, [])).toContain("not available");
-    expect(setupProblem(game, [{ name: "Sam" }, { name: " " }])).toContain("at least 2");
-    expect(setupProblem(game, [{ name: "Sam" }, { name: "Riley" }])).toBeNull();
+    const draft = (includeUser: boolean, participants: string[]) => ({ includeUser, participants });
+    expect(setupProblem(undefined, draft(true, []))).toBe("Choose a game.");
+    expect(setupProblem({ ...game, available: false }, draft(true, ["Riley"]))).toContain("not available");
+    expect(setupProblem(game, draft(false, []))).toBe("Kings Cup needs at least 2 players; add some participants.");
+    expect(setupProblem(game, draft(true, [" "]))).toBe("Kings Cup needs at least 2 players; add another participant.");
+    expect(setupProblem(game, draft(true, ["Riley"]))).toBeNull();
+    expect(setupProblem(game, draft(false, ["Riley", "Alex"]))).toBeNull();
+    expect(seatCount(draft(true, ["Riley", "", "Alex "]))).toBe(3);
+  });
+
+  test("startInput drops blank participant fields", () => {
+    const draft: SetupDraft = { gameId: "kings_cup", includeUser: true, participants: [" Riley ", "", "Alex"], turnOrder: "random", options: { endOnFourthKing: false }, optionsGameId: "kings_cup" };
+    expect(startInput(draft)).toEqual({ gameId: "kings_cup", includeUser: true, participants: ["Riley", "Alex"], turnOrder: "random", options: { endOnFourthKing: false } });
+  });
+
+  test("changedRules keeps only real, complete edits", () => {
+    const current = [
+      { id: "7", label: "7", title: "Heaven", rule: "Last to raise a hand drinks.", effect: "none" },
+      { id: "8", label: "8", title: "Mate", rule: "Pick a mate.", effect: "mate" },
+      { id: "9", label: "9", title: "Rhyme", rule: "Rhyme.", effect: "none" },
+    ];
+    expect(changedRules(current, {
+      "7": { title: " Thumb War ", rule: "Loser drinks.", effect: "none" },
+      "8": { title: "Mate", rule: "Pick a mate.", effect: "mate" },
+      "9": { title: "", rule: "Rhyme.", effect: "none" },
+    })).toEqual({ "7": { title: "Thumb War", rule: "Loser drinks.", effect: "none" } });
+    expect(changedRules(current, { "8": { title: "Mate", rule: "Pick a mate.", effect: "target" } })).toEqual({
+      "8": { title: "Mate", rule: "Pick a mate.", effect: "target" },
+    });
   });
 
   test("request ids are unique without crypto.randomUUID", () => {

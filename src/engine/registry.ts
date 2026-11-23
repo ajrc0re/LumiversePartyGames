@@ -11,6 +11,10 @@ const PLANNED: readonly GameSummary[] = [
   { id: "truth_or_dare", name: "Truth or Dare", description: "Pick truth or dare and face a prompt from the pool.", minPlayers: 2, available: false },
 ];
 
+export function listGameDefinitions(): readonly AnyGameDefinition[] {
+  return GAMES;
+}
+
 export function getGame(id: string): AnyGameDefinition | undefined {
   return GAMES.find((game) => game.id === id);
 }

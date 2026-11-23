@@ -1,7 +1,6 @@
 import type { MacroDefinitionDTO, SpindleAPI, SpindleCommandDTO } from "lumiverse-spindle-types";
 import { cryptoRng, cryptoSeed } from "./engine/rng";
 import type { TimelineMessage } from "./engine/session";
-import { SETTINGS_PATH } from "./backend/settings";
 import { handlePartyRequest } from "./backend/requests";
 import { PartyGamesService, type HostPort } from "./backend/service";
 import type { PartyChanged } from "./types";
@@ -54,8 +53,8 @@ const host: HostPort = {
     const { text } = await spindle.macros.resolve(template, { chatId, commit: false, ...(userId ? { userId } : {}) });
     return text;
   },
-  readSettings: (userId) => spindle.userStorage.getJson<unknown>(SETTINGS_PATH, { fallback: {}, ...(userId ? { userId } : {}) }),
-  writeSettings: (value, userId) => spindle.userStorage.setJson(SETTINGS_PATH, value, userId ? { userId } : {}),
+  readJson: (path, userId) => spindle.userStorage.getJson<unknown>(path, { fallback: null, ...(userId ? { userId } : {}) }),
+  writeJson: (path, value, userId) => spindle.userStorage.setJson(path, value, userId ? { userId } : {}),
   newId: (prefix) => prefix + Date.now().toString(36) + (++idCounter).toString(36) + cryptoSeed().toString(36),
   seed: cryptoSeed,
   rng: cryptoRng,

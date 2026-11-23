@@ -110,7 +110,7 @@ interface GameSession {
 - Manual in Lumiverse: full Kings Cup game in one chat, swipe and delete mid-game, two chats with separate games, reload the app mid-game.
 - Before handoff: `bun run typecheck`, `bun test`, `bun run build`, `git diff --check`.
 
-## Status (0.1.0)
+## Status (0.2.0)
 
 Milestones 1–4 are implemented for Kings Cup. Decisions made along the way:
 
@@ -119,13 +119,15 @@ Milestones 1–4 are implemented for Kings Cup. Decisions made along the way:
 - **Interceptor:** skips `quiet` generations and drops the context's `excludeMessageId` from the timeline, so regenerating the message an action came after does not narrate that action.
 - **Commands:** Lumiverse has no extension slash commands; the command palette (`spindle.commands`) has "Next action" and "Undo last action" instead.
 - **Permissions:** `chats`, `chat_mutation`, `interceptor`. `ui_panels` was dropped: drawer tabs and input-bar actions are free, and no float widget is used.
-- **Default players:** resolved with a dry `spindle.macros.resolve("{{user}}", "{{char}}", "{{group}}")`, which answers the group-member question without the `characters` or `personas` permissions.
+- **Participants are typed in by hand.** Most chats are one card that plays several characters, written differently by every author, so there is no reliable way to list them (`{{group}}` only helps real group chats). Setup has an "Include {{user}}" toggle in the first slot (the backend resolves the persona name with a dry macro resolve when the game starts) and add/remove fields for everyone else.
+- **Turn order:** "As listed" or "Random" at setup (seats shuffled once with the setup RNG, so it is part of the stored setup state). Mid-game, `set_direction` is a table action every game gets through `applyAction` in `src/engine/core.ts`; the panel shows it as a "Reverse turn order" toggle.
+- **Kings Cup card rules:** editable at setup (per game), savable as the user's default for new games (`defaults-kings_cup.json` in user storage), and editable mid-game through a `set_rules` action. Mid-game edits are events, so undo and swipes cover them. Kings always keep the King's Cup effect.
 
-Not yet done: per-card rule editing in the setup UI (the engine already accepts `rules` overrides), Never Have I Ever and Truth or Dare (milestone 5), LLM tools (milestone 6), and manual testing in a live Lumiverse.
+Not yet done: Never Have I Ever and Truth or Dare (milestone 5), LLM tools (milestone 6), and manual testing in a live Lumiverse.
 
 ## Open Questions
 
 - Who decides for model-played characters (Truth vs Dare, who an "8 Mate" or "2 You" targets): weighted RNG in the extension, the model via a tool/tag, or the user?
-- Single chats with one character vs group chats: does Lumiverse expose the group member list to extensions, or is the player list always configured by hand?
-- Which Kings Cup house-rule set should be the default, and should the card table be editable per chat or globally?
+- ~~Single chats with one character vs group chats~~: answered in 0.2.0; participants are entered by hand.
+- ~~Which Kings Cup house-rule set should be the default, and per chat or globally?~~: answered in 0.2.0; standard rules by default, editable per game, with a saved per-user default.
 - Content tiers for NHIE/ToD pools: what ships by default, and is intensity a per-game option?

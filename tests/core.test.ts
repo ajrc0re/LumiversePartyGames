@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   advanceTurn,
+  applyAction,
   createCoreState,
   createDeck,
   createPlayers,
@@ -9,8 +10,10 @@ import {
   IllegalActionError,
   nextActiveIndex,
   nextPlayer,
+  playOrder,
   reverseDirection,
   skipNext,
+  turnOrderLine,
 } from "../src/engine/core";
 import { mulberry32, randomInt, shuffle } from "../src/engine/rng";
 
@@ -123,5 +126,41 @@ describe("decks", () => {
     expect(deck.drawn).toEqual(drawn);
     expect(deck.remaining).toEqual([]);
     expect(() => drawFrom(deck)).toThrow(IllegalActionError);
+  });
+});
+
+describe("table actions", () => {
+  const game = {
+    id: "stub",
+    apply: () => {
+      throw new Error("game apply should not run for table actions");
+    },
+  } as never;
+
+  test("set_direction reverses and restores the turn order", () => {
+    const state = createCoreState(seats("A", "B", "C", "D"), "draw", 2);
+    const reversed = applyAction(game, state, { type: "set_direction", choice: "reversed" }, mulberry32(0));
+    expect(state.turn.direction).toBe(1);
+    expect(reversed.turn.direction).toBe(-1);
+    expect(nextPlayer(reversed)?.name).toBe("D");
+    expect(reversed.log.at(-1)?.text).toBe("Turn order reversed. Next up: D.");
+    expect(playOrder(reversed).map((player) => player.name)).toEqual(["A", "D", "C", "B"]);
+    expect(turnOrderLine(reversed)).toBe("Turn order (reversed), from the current player: A → D → C → B.");
+    const restored = applyAction(game, reversed, { type: "set_direction", choice: "forward" }, mulberry32(0));
+    expect(nextPlayer(restored)?.name).toBe("B");
+  });
+
+  test("set_direction rejects no-ops, bad choices, and finished games", () => {
+    const state = createCoreState(seats("A", "B"), "draw", 2);
+    expect(() => applyAction(game, state, { type: "set_direction", choice: "forward" }, mulberry32(0))).toThrow("already forward");
+    expect(() => applyAction(game, state, { type: "set_direction" }, mulberry32(0))).toThrow(IllegalActionError);
+    state.status = "ended";
+    expect(() => applyAction(game, state, { type: "set_direction", choice: "reversed" }, mulberry32(0))).toThrow("game is over");
+  });
+
+  test("play order skips eliminated players", () => {
+    const state = createCoreState(seats("A", "B", "C"), "draw", 2);
+    eliminate(state, "p2");
+    expect(turnOrderLine(state)).toBe("Turn order, from the current player: A → C.");
   });
 });
