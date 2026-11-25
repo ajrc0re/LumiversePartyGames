@@ -54,6 +54,8 @@ export interface GameDefinition<S extends CoreState = CoreState, O extends GameO
   name: string;
   description: string;
   minPlayers: number;
+  /** False when the game picks who goes next itself; then seat order and reversal do not apply. */
+  usesTurnOrder: boolean;
   /** Phase ids in play order, each with a label for the scoreboard. */
   phases: Readonly<Record<string, string>>;
   defaultOptions(): O;
@@ -257,6 +259,9 @@ function applyTableAction<S extends CoreState>(input: S, action: GameAction): S 
 
 /** Applies a table action or delegates to the game. The only entry point replays use. */
 export function applyAction<S extends CoreState>(definition: GameDefinition<S, any>, state: S, action: GameAction, rng: Rng): S {
+  if (action.type === "set_direction" && definition.usesTurnOrder === false) {
+    throw new IllegalActionError(definition.name + " has no fixed turn order to reverse.");
+  }
   if (TABLE_ACTIONS.includes(action.type)) return applyTableAction(state, action);
   return definition.apply(state, action, rng);
 }
@@ -328,11 +333,22 @@ export function drawFrom<T>(deck: Deck<T>): T {
   return card;
 }
 
+// ─── Input helpers ──────────────────────────────────────────────────────────
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Collapses whitespace, trims, and caps the length; non-strings become "". */
+export function cleanText(value: unknown, limit: number): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
+}
+
 // ─── Text helpers for prompt blocks ────────────────────────────────────────
 
 export const STANDING_INSTRUCTION =
   "This block is the authoritative game state, maintained by the game. Narrate only what it says. " +
-  "Do not draw cards, pick prompts, change whose turn it is, eliminate players, or move the game to a new phase yourself; " +
+  "Do not draw cards, change whose turn it is, eliminate players, or move the game to a new phase yourself; " +
   "the game advances only when the players use the game controls. If an action is still pending, describe the moment and leave it pending.";
 
 export function joinNames(names: readonly string[]): string {
@@ -345,6 +361,6 @@ export function formatBlock(title: string, lines: readonly string[]): string {
   return "[" + title + "]\n" + lines.filter((line) => line.trim().length > 0).join("\n") + "\n" + STANDING_INSTRUCTION;
 }
 
-export function recentLog(state: CoreState, count: number): string[] {
-  return state.log.slice(-count).map((entry) => "Turn " + String(entry.turn) + ": " + entry.text);
+export function recentLog(state: CoreState, count: number, noun = "Turn"): string[] {
+  return state.log.slice(-count).map((entry) => noun + " " + String(entry.turn) + ": " + entry.text);
 }

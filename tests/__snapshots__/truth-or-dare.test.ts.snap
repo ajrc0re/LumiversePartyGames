@@ -1,0 +1,21 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Truth or Dare view and prompt the prompt leaves the content to the story and protects the user's choices 1`] = `
+"[Truth or Dare — round 1]
+Players: Sam, Riley, Alex, Jo.
+This round, Jo asks Sam: "Truth or dare?"
+Sam picks truth or dare, then answers the truth or does the dare. What Jo asks and what Sam does are up to the story.
+Sam is played by the user: let them choose and answer; do not decide for them.
+Nobody else asks or answers this round. Afterwards Sam asks next and the game picks who answers; do not start the next round yourself.
+This block is the authoritative game state, maintained by the game. Narrate only what it says. Do not draw cards, change whose turn it is, eliminate players, or move the game to a new phase yourself; the game advances only when the players use the game controls. If an action is still pending, describe the moment and leave it pending."
+`;
+
+exports[`Truth or Dare view and prompt a later round mentions the last one 1`] = `
+"[Truth or Dare — round 3]
+Players: Sam, Riley, Alex, Jo.
+This round, Alex asks Sam: "Truth or dare?"
+Sam picks truth or dare, then answers the truth or does the dare. What Alex asks and what Sam does are up to the story.
+Nobody else asks or answers this round. Afterwards Sam asks next and the game picks who answers; do not start the next round yourself.
+Last round: Jo asked Alex.
+This block is the authoritative game state, maintained by the game. Narrate only what it says. Do not draw cards, change whose turn it is, eliminate players, or move the game to a new phase yourself; the game advances only when the players use the game controls. If an action is still pending, describe the moment and leave it pending."
+`;

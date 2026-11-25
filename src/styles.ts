@@ -32,6 +32,7 @@ export const partyStyles = [
   ".pg-rules{display:grid;gap:8px;margin-top:8px}.pg-rule{display:grid;grid-template-columns:30px minmax(0,1fr) minmax(0,1fr);gap:6px;align-items:center;padding:8px;border:1px solid " + BORDER + ";border-radius:7px}",
   ".pg-rule-rank{font:700 14px/1 ui-monospace,Consolas,monospace;text-align:center}.pg-rule .pg-select{width:100%}.pg-rule-locked{color:" + MUTED + ";font-size:12px}",
   ".pg-textarea{grid-column:2 / span 2;width:100%;min-height:46px;resize:vertical;line-height:1.35}",
+  ".pg-actions.first{margin-top:0}.pg-notes{margin:8px 0 0;padding-left:18px;color:" + MUTED + ";font-size:12px}.pg-notes b{font-weight:600}",
   ".pg-seat-number{color:" + MUTED + ";font:600 12px/1 ui-monospace,Consolas,monospace;text-align:right}",
   ".pg-headline{font-size:16px;font-weight:700;margin:0}.pg-detail{margin:4px 0 0}",
   ".pg-kicker{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:" + MUTED + "}",

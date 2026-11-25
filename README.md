@@ -2,7 +2,7 @@
 
 Play party games inside a Lumiverse chat. The extension deals the cards, tracks whose turn it is, and keeps score; the model only narrates what happened.
 
-**Available now:** Kings Cup. **Coming next:** Never Have I Ever, Truth or Dare.
+**Available now:** Kings Cup, Truth or Dare. **Coming next:** Never Have I Ever.
 
 ## How to play
 
@@ -40,6 +40,16 @@ These are the standard rules. Open **Card rules** to change any card's name, its
 - During a game, the same editor changes the rules from now on. The change is recorded like any action, so Undo and swipes cover it.
 
 The deck is shuffled once when the game starts and is drawn without replacement, so no card repeats. You can turn off "the 4th King ends the game" to play through the whole deck.
+
+## Truth or Dare
+
+The game only keeps track of who is asking and who is answering; the truths, the dares, and whether the player picks truth or dare are up to the roleplay.
+
+1. When the game starts it picks a random **asker** and a random **player** to answer.
+2. The asker asks the player "Truth or dare?", and the player picks one and answers it or does it in the story.
+3. Press **Next round**. The player becomes the new asker, and the game picks someone else at random to answer.
+
+The panel shows who is **Asking** and who is **Answering**, and the model is told the same. When you are the one asking or answering, the model is told not to decide for you. Each round's random pick is fixed when the game starts, so undoing a round or swiping back and redoing it brings up the same player. There is no fixed seat order, so the turn order setting and the reverse toggle do not apply.
 
 ## Swipes, deletes, and undo
 

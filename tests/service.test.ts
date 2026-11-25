@@ -252,3 +252,23 @@ describe("frontend request routing", () => {
     expect(await handlePartyRequest({ type: "other" }, service)).toEqual({ reply: null, changed: null });
   });
 });
+
+describe("Truth or Dare through the service", () => {
+  test("starts with roles and advances through the next-action command", async () => {
+    const host = new FakeHost();
+    host.addChat("c1");
+    const service = new PartyGamesService(host);
+    const initial = await service.state("c1");
+    expect(initial.games.find((game) => game.id === "truth_or_dare")).toMatchObject({ available: true, usesTurnOrder: false });
+    expect(initial.gameDefaults.truth_or_dare).toEqual({});
+    const state = await service.start("c1", { gameId: "truth_or_dare", includeUser: true, participants: ["Riley", "Alex"], turnOrder: "listed", options: {} });
+    const view = state.game!.view;
+    expect(view.roles?.map((role) => role.label)).toEqual(["Asking", "Answering"]);
+    expect(state.game?.prompt).toContain('"Truth or dare?"');
+    const answering = view.roles![1]!.playerId;
+    const outcome = await service.next("c1");
+    expect(outcome.state.game?.view.roles?.[0]?.playerId).toBe(answering);
+    expect(outcome.summary).toMatch(/ asks /);
+    await expect(service.act("c1", { type: "set_direction", choice: "reversed" })).rejects.toThrow("no fixed turn order");
+  });
+});

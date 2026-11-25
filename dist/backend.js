@@ -150,6 +150,9 @@ function findPlayer(state, id) {
 function playerName(state, id) {
   return id && findPlayer(state, id)?.name || "Unknown player";
 }
+function activePlayers(state) {
+  return state.players.filter((player) => player.active);
+}
 function playerChoices(players) {
   return players.map((player) => ({ id: player.id, label: player.name }));
 }
@@ -245,6 +248,9 @@ function applyTableAction(input, action) {
   return state;
 }
 function applyAction(definition, state, action, rng) {
+  if (action.type === "set_direction" && definition.usesTurnOrder === false) {
+    throw new IllegalActionError(definition.name + " has no fixed turn order to reverse.");
+  }
   if (TABLE_ACTIONS.includes(action.type))
     return applyTableAction(state, action);
   return definition.apply(state, action, rng);
@@ -295,7 +301,13 @@ function drawFrom(deck) {
   deck.drawn.push(card);
   return card;
 }
-var STANDING_INSTRUCTION = "This block is the authoritative game state, maintained by the game. Narrate only what it says. " + "Do not draw cards, pick prompts, change whose turn it is, eliminate players, or move the game to a new phase yourself; " + "the game advances only when the players use the game controls. If an action is still pending, describe the moment and leave it pending.";
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function cleanText(value, limit) {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
+}
+var STANDING_INSTRUCTION = "This block is the authoritative game state, maintained by the game. Narrate only what it says. " + "Do not draw cards, change whose turn it is, eliminate players, or move the game to a new phase yourself; " + "the game advances only when the players use the game controls. If an action is still pending, describe the moment and leave it pending.";
 function joinNames(names) {
   if (names.length <= 1)
     return names[0] ?? "";
@@ -309,8 +321,8 @@ function formatBlock(title, lines) {
 `) + `
 ` + STANDING_INSTRUCTION;
 }
-function recentLog(state, count) {
-  return state.log.slice(-count).map((entry) => "Turn " + String(entry.turn) + ": " + entry.text);
+function recentLog(state, count, noun = "Turn") {
+  return state.log.slice(-count).map((entry) => noun + " " + String(entry.turn) + ": " + entry.text);
 }
 
 // src/games/kings-cup.ts
@@ -348,12 +360,6 @@ var PHASES = {
   end_turn: "end of turn",
   game_over: "game over"
 };
-function isRecord(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-function cleanText(value, limit) {
-  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
-}
 function normalizeRules(raw, baseTable = DEFAULT_RULES) {
   const source = isRecord(raw) ? raw : {};
   const table = {};
@@ -697,6 +703,7 @@ var kingsCup = {
   name: "Kings Cup",
   description: "Draw from a 52-card deck; every card has a rule. Whoever draws the 4th King drinks the King's Cup.",
   minPlayers: 2,
+  usesTurnOrder: true,
   phases: PHASES,
   defaultOptions,
   normalizeOptions,
@@ -707,11 +714,133 @@ var kingsCup = {
   view
 };
 
+// src/games/truth-or-dare.ts
+var PHASES2 = {
+  round: "asking",
+  game_over: "game over"
+};
+function pickPlayer(state, askerId, round) {
+  const candidates = state.players.filter((player) => player.active && player.id !== askerId);
+  if (!candidates.length)
+    throw new Error("Truth or Dare needs someone besides the asker.");
+  const rng = mulberry32(state.rollSeed + Math.imul(round, 2654435761) >>> 0);
+  return candidates[randomInt(rng, candidates.length)];
+}
+function seatIndex(state, playerId) {
+  return state.players.findIndex((player) => player.id === playerId);
+}
+function roundLine(state) {
+  return playerName(state, state.asker) + " asks " + currentPlayer(state).name + ".";
+}
+function setup2(players, _options, rng) {
+  const core = createCoreState(players, "round", 2);
+  const rollSeed = Math.floor(rng.next() * 4294967296) >>> 0;
+  const asker = core.players[randomInt(rng, core.players.length)];
+  const state = { ...core, game: "truth_or_dare", asker: asker.id, rollSeed, previous: null };
+  state.turn.index = seatIndex(state, pickPlayer(state, asker.id, 1).id);
+  addLog(state, roundLine(state));
+  return state;
+}
+function legalActions2(state) {
+  if (state.status !== "active" || state.phase !== "round")
+    return [];
+  const player = currentPlayer(state);
+  return [{
+    type: "next_round",
+    label: "Next round",
+    description: player.name + " asks next; the game picks who answers.",
+    primary: true
+  }];
+}
+function apply2(input, action, _rng) {
+  const state = cloneState(input);
+  switch (action.type) {
+    case "next_round": {
+      requirePhase(state, PHASES2, ["round"], action);
+      const player = requireCurrentActor(state, action);
+      state.previous = { asker: state.asker, player: player.id };
+      state.asker = player.id;
+      state.turn.number += 1;
+      state.turn.index = seatIndex(state, pickPlayer(state, player.id, state.turn.number).id);
+      addLog(state, roundLine(state));
+      return state;
+    }
+    default:
+      return unknownAction(state, PHASES2, action);
+  }
+}
+function promptBlock2(state) {
+  const lines = ["Players: " + activePlayers(state).map((player) => player.name).join(", ") + "."];
+  const asker = findPlayer(state, state.asker);
+  const player = currentPlayer(state);
+  const askerName = asker?.name ?? "Someone";
+  lines.push("This round, " + askerName + " asks " + player.name + ': "Truth or dare?"');
+  lines.push(player.name + " picks truth or dare, then answers the truth or does the dare. What " + askerName + " asks and what " + player.name + " does are up to the story.");
+  if (asker?.kind === "user")
+    lines.push(askerName + " is played by the user: let them ask; do not ask for them.");
+  if (player.kind === "user")
+    lines.push(player.name + " is played by the user: let them choose and answer; do not decide for them.");
+  lines.push("Nobody else asks or answers this round. Afterwards " + player.name + " asks next and the game picks who answers; do not start the next round yourself.");
+  if (state.previous) {
+    lines.push("Last round: " + playerName(state, state.previous.asker) + " asked " + playerName(state, state.previous.player) + ".");
+  }
+  return formatBlock("Truth or Dare \u2014 round " + String(state.turn.number), lines);
+}
+function view2(state) {
+  const player = currentPlayer(state);
+  const askerName = playerName(state, state.asker);
+  return {
+    gameId: "truth_or_dare",
+    gameName: "Truth or Dare",
+    status: state.status,
+    turnNumber: state.turn.number,
+    turnNoun: "Round",
+    phase: state.phase,
+    phaseLabel: PHASES2[state.phase] ?? state.phase,
+    currentPlayerId: player.id,
+    nextPlayerId: null,
+    roles: [
+      { label: "Asking", playerId: state.asker },
+      { label: "Answering", playerId: player.id }
+    ],
+    players: state.players.map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      kind: entry.kind,
+      active: entry.active,
+      current: entry.id === player.id,
+      next: false,
+      badges: entry.id === state.asker ? ["Asking"] : entry.id === player.id ? ["Answering"] : []
+    })),
+    headline: askerName + " asks " + player.name,
+    detail: "Truth or dare? What " + askerName + " asks and what " + player.name + " does are up to the story.",
+    facts: [
+      { label: "Next asker", value: player.name },
+      { label: "Rounds played", value: String(state.turn.number - 1) }
+    ],
+    recent: recentLog(state, 6, "Round")
+  };
+}
+var truthOrDare = {
+  id: "truth_or_dare",
+  name: "Truth or Dare",
+  description: "The game picks who asks and who answers; the story decides the truths and dares. Whoever answers asks next.",
+  minPlayers: 2,
+  usesTurnOrder: false,
+  phases: PHASES2,
+  defaultOptions: () => ({}),
+  normalizeOptions: () => ({}),
+  setup: setup2,
+  legalActions: legalActions2,
+  apply: apply2,
+  promptBlock: promptBlock2,
+  view: view2
+};
+
 // src/engine/registry.ts
-var GAMES = [kingsCup];
+var GAMES = [kingsCup, truthOrDare];
 var PLANNED = [
-  { id: "never_have_i_ever", name: "Never Have I Ever", description: "Take turns confessing; lose a life for everything you have done.", minPlayers: 2, available: false },
-  { id: "truth_or_dare", name: "Truth or Dare", description: "Pick truth or dare and face a prompt from the pool.", minPlayers: 2, available: false }
+  { id: "never_have_i_ever", name: "Never Have I Ever", description: "Take turns confessing; lose a life for everything you have done.", minPlayers: 2, available: false, usesTurnOrder: true }
 ];
 function listGameDefinitions() {
   return GAMES;
@@ -732,7 +861,8 @@ function listGames() {
       name: game.name,
       description: game.description,
       minPlayers: game.minPlayers,
-      available: true
+      available: true,
+      usesTurnOrder: game.usesTurnOrder
     })),
     ...PLANNED.filter((planned) => !getGame(planned.id))
   ];

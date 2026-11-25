@@ -89,8 +89,33 @@ function requestIdFactory(prefix = "pg") {
   return () => prefix + "-" + Date.now().toString(36) + "-" + (++sequence).toString(36) + "-" + Math.floor(Math.random() * 1e9).toString(36);
 }
 
+// src/dom.ts
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (value === undefined || value === null || value === false)
+      continue;
+    if (key === "class")
+      node.className = String(value);
+    else if (key === "text")
+      node.textContent = String(value);
+    else if (key.startsWith("on") && typeof value === "function")
+      node.addEventListener(key.slice(2), value);
+    else if (key in node && typeof value !== "string")
+      node[key] = value;
+    else
+      node.setAttribute(key, value === true ? "" : String(value));
+  }
+  for (const child of children) {
+    if (child === null || child === undefined || child === false)
+      continue;
+    node.append(child);
+  }
+  return node;
+}
+
 // src/engine/core.ts
-var STANDING_INSTRUCTION = "This block is the authoritative game state, maintained by the game. Narrate only what it says. " + "Do not draw cards, pick prompts, change whose turn it is, eliminate players, or move the game to a new phase yourself; " + "the game advances only when the players use the game controls. If an action is still pending, describe the moment and leave it pending.";
+var STANDING_INSTRUCTION = "This block is the authoritative game state, maintained by the game. Narrate only what it says. " + "Do not draw cards, change whose turn it is, eliminate players, or move the game to a new phase yourself; " + "the game advances only when the players use the game controls. If an action is still pending, describe the moment and leave it pending.";
 
 // src/games/kings-cup.ts
 var RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -118,6 +143,62 @@ var DEFAULT_RULES = Object.freeze({
   Q: { title: "Question Master", rule: "{drawer} is Question Master: anyone who answers their question drinks, until another Queen is drawn.", effect: "question_master" },
   K: { title: "King's Cup", rule: "{drawer} pours some of their drink into the King's Cup. Whoever draws the 4th King drinks the whole cup.", effect: "kings_cup" }
 });
+
+// src/frontend-options.ts
+function renderGameOptions(draft, kit) {
+  if (draft.gameId === "kings_cup")
+    return kingsCupOptions(draft, kit);
+  return [];
+}
+function renderRuleRows(values) {
+  const list = el("div", { class: "pg-rules" });
+  for (const rank of RANKS) {
+    const entry = values[rank];
+    if (!entry)
+      continue;
+    const title = el("input", { class: "pg-input", type: "text", value: entry.title, maxlength: "40", "aria-label": rank + " title" });
+    title.addEventListener("input", () => {
+      entry.title = title.value;
+    });
+    const rows = Math.min(5, Math.max(2, Math.ceil(entry.rule.length / 42)));
+    const rule = el("textarea", { class: "pg-input pg-textarea", maxlength: "300", rows: String(rows), "aria-label": rank + " rule" });
+    rule.value = entry.rule;
+    rule.addEventListener("input", () => {
+      entry.rule = rule.value;
+    });
+    let effect;
+    if (rank === "K") {
+      effect = el("span", { class: "pg-rule-locked", text: EFFECT_LABELS.kings_cup });
+    } else {
+      const select = el("select", { class: "pg-select", "aria-label": rank + " effect", title: "What drawing this card asks of the drawer" });
+      for (const option of EFFECTS) {
+        if (option === "kings_cup")
+          continue;
+        select.append(el("option", { value: option, selected: entry.effect === option, text: EFFECT_LABELS[option] }));
+      }
+      select.addEventListener("change", () => {
+        entry.effect = select.value;
+      });
+      effect = select;
+    }
+    list.append(el("div", { class: "pg-rule" }, el("span", { class: "pg-rule-rank", text: rank }), title, effect, rule));
+  }
+  return list;
+}
+function kingsCupOptions(draft, kit) {
+  const fourthKing = el("input", { type: "checkbox", checked: draft.options.endOnFourthKing !== false });
+  fourthKing.addEventListener("change", () => {
+    draft.options.endOnFourthKing = fourthKing.checked;
+  });
+  const rules = draft.options.rules ?? (draft.options.rules = structuredClone(DEFAULT_RULES));
+  return [
+    el("section", { class: "pg-section" }, el("h3", { text: "House rules" }), el("label", { class: "pg-check" }, fourthKing, el("span", { text: "The 4th King ends the game (otherwise play until the deck runs out)" }))),
+    kit.collapsible("setup-rules", "Card rules", el("p", { class: "pg-muted", text: "What each card means in this game. {drawer} is replaced with the drawing player's name." }), renderRuleRows(rules), el("div", { class: "pg-actions" }, kit.button("Save as my default", () => kit.saveDefaults(draft.gameId, "Kings Cup", draft.options), { small: true }), kit.button("Reset to standard rules", () => {
+      draft.options.rules = structuredClone(DEFAULT_RULES);
+      kit.render();
+    }, { small: true })))
+  ];
+}
 
 // src/styles.ts
 var STYLE_ID = "lumiverse-party-games-styles";
@@ -152,6 +233,7 @@ var partyStyles = [
   ".pg-rules{display:grid;gap:8px;margin-top:8px}.pg-rule{display:grid;grid-template-columns:30px minmax(0,1fr) minmax(0,1fr);gap:6px;align-items:center;padding:8px;border:1px solid " + BORDER + ";border-radius:7px}",
   ".pg-rule-rank{font:700 14px/1 ui-monospace,Consolas,monospace;text-align:center}.pg-rule .pg-select{width:100%}.pg-rule-locked{color:" + MUTED + ";font-size:12px}",
   ".pg-textarea{grid-column:2 / span 2;width:100%;min-height:46px;resize:vertical;line-height:1.35}",
+  ".pg-actions.first{margin-top:0}.pg-notes{margin:8px 0 0;padding-left:18px;color:" + MUTED + ";font-size:12px}.pg-notes b{font-weight:600}",
   ".pg-seat-number{color:" + MUTED + ";font:600 12px/1 ui-monospace,Consolas,monospace;text-align:right}",
   ".pg-headline{font-size:16px;font-weight:700;margin:0}.pg-detail{margin:4px 0 0}",
   ".pg-kicker{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:" + MUTED + "}",
@@ -185,29 +267,6 @@ var REFRESH_EVENTS = [
   "GENERATION_STOPPED"
 ];
 var MAX_PARTICIPANTS = 15;
-function el(tag, props = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (value === undefined || value === null || value === false)
-      continue;
-    if (key === "class")
-      node.className = String(value);
-    else if (key === "text")
-      node.textContent = String(value);
-    else if (key.startsWith("on") && typeof value === "function")
-      node.addEventListener(key.slice(2), value);
-    else if (key in node && typeof value !== "string")
-      node[key] = value;
-    else
-      node.setAttribute(key, value === true ? "" : String(value));
-  }
-  for (const child of children) {
-    if (child === null || child === undefined || child === false)
-      continue;
-    node.append(child);
-  }
-  return node;
-}
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -384,42 +443,6 @@ function setup(ctx) {
     });
     return details;
   }
-  function renderRuleRows(values) {
-    const list = el("div", { class: "pg-rules" });
-    for (const rank of RANKS) {
-      const entry = values[rank];
-      if (!entry)
-        continue;
-      const title = el("input", { class: "pg-input", type: "text", value: entry.title, maxlength: "40", "aria-label": rank + " title" });
-      title.addEventListener("input", () => {
-        entry.title = title.value;
-      });
-      const rows = Math.min(5, Math.max(2, Math.ceil(entry.rule.length / 42)));
-      const rule = el("textarea", { class: "pg-input pg-textarea", maxlength: "300", rows: String(rows), "aria-label": rank + " rule" });
-      rule.value = entry.rule;
-      rule.addEventListener("input", () => {
-        entry.rule = rule.value;
-      });
-      let effect;
-      if (rank === "K") {
-        effect = el("span", { class: "pg-rule-locked", text: EFFECT_LABELS.kings_cup });
-      } else {
-        const select = el("select", { class: "pg-select", "aria-label": rank + " effect" });
-        for (const option of EFFECTS) {
-          if (option === "kings_cup")
-            continue;
-          select.append(el("option", { value: option, selected: entry.effect === option, text: EFFECT_LABELS[option] }));
-        }
-        select.title = "What drawing this card asks of the drawer";
-        select.addEventListener("change", () => {
-          entry.effect = select.value;
-        });
-        effect = select;
-      }
-      list.append(el("div", { class: "pg-rule" }, el("span", { class: "pg-rule-rank", text: rank }), title, effect, rule));
-    }
-    return list;
-  }
   function button(label, onClick, options = {}) {
     const classes = ["pg-button", options.primary ? "primary" : "", options.danger ? "danger" : "", options.small ? "small" : ""].filter(Boolean).join(" ");
     return el("button", { type: "button", class: classes, disabled: Boolean(options.disabled || busy), title: options.title, onclick: onClick, text: label });
@@ -482,25 +505,20 @@ function setup(ctx) {
     order.addEventListener("change", () => {
       draft.turnOrder = order.value === "random" ? "random" : "listed";
     });
-    const gameOptions = [];
-    if (draft.gameId === "kings_cup") {
-      const fourthKing = el("input", { type: "checkbox", checked: draft.options.endOnFourthKing !== false });
-      fourthKing.addEventListener("change", () => {
-        draft.options.endOnFourthKing = fourthKing.checked;
-      });
-      const rules = draft.options.rules ?? (draft.options.rules = structuredClone(DEFAULT_RULES));
-      gameOptions.push(el("section", { class: "pg-section" }, el("h3", { text: "House rules" }), el("label", { class: "pg-check" }, fourthKing, el("span", { text: "The 4th King ends the game (otherwise play until the deck runs out)" }))), collapsible("setup-rules", "Card rules", el("p", { class: "pg-muted", text: "What each card means in this game. {drawer} is replaced with the drawing player's name." }), renderRuleRows(rules), el("div", { class: "pg-actions" }, button("Save as my default", () => {
-        run("save-defaults", { gameId: draft.gameId, options: draft.options }).then((ok) => {
+    const kit = {
+      button,
+      collapsible,
+      render,
+      saveDefaults: (gameId, gameName, options) => {
+        run("save-defaults", { gameId, options }).then((ok) => {
           if (ok) {
-            info = "Saved. New Kings Cup games start with these rules.";
+            info = "Saved. New " + gameName + " games start with these settings.";
             render();
           }
         });
-      }, { small: true }), button("Reset to standard rules", () => {
-        draft.options.rules = structuredClone(DEFAULT_RULES);
-        render();
-      }, { small: true }))));
-    }
+      }
+    };
+    const gameOptions = renderGameOptions(draft, kit);
     return [
       el("section", { class: "pg-section" }, el("h3", { text: "Pick a game" }), gameList),
       el("section", { class: "pg-section" }, el("h3", { text: "Participants" }), seats, el("div", { class: "pg-actions" }, button("Add participant", () => {
@@ -508,10 +526,10 @@ function setup(ctx) {
         render();
         const inputs = root.querySelectorAll(".pg-seat:not(.user) .pg-input");
         inputs[inputs.length - 1]?.focus();
-      }, { small: true, disabled: draft.participants.length >= MAX_PARTICIPANTS })), el("label", { class: "pg-field" }, el("span", { class: "pg-label", text: "Turn order" }), order)),
+      }, { small: true, disabled: draft.participants.length >= MAX_PARTICIPANTS })), selected?.usesTurnOrder === false ? el("p", { class: "pg-muted", text: selected.name + " picks who goes each turn at random, so the order above does not matter." }) : el("label", { class: "pg-field" }, el("span", { class: "pg-label", text: "Turn order" }), order)),
       ...gameOptions,
       el("div", { class: "pg-actions" }, startButton, problemText)
-    ].filter((node) => node !== null && node !== false);
+    ];
   }
   function renderField(field, values) {
     if (field.kind === "player") {
@@ -553,35 +571,46 @@ function setup(ctx) {
     if (!game.actions.length)
       return null;
     const section = el("section", { class: "pg-section", "aria-label": "Actions" });
-    for (const action of game.actions) {
-      const key = game.sessionId + ":" + String(game.view.turnNumber) + ":" + game.view.phase + ":" + action.type + ":" + JSON.stringify(action.preset ?? {});
-      let values = actionValues.get(key);
-      if (!values) {
-        values = {};
-        actionValues.set(key, values);
-      }
-      const current = values;
-      const missing = missingField(action, current);
+    const actionButton = (action, values, key) => {
+      const missing = missingField(action, values);
       const blocked = missing && missing.kind !== "text" ? missing : null;
-      section.append(el("div", { class: "pg-action" }, action.description ? el("p", { class: "pg-muted", text: action.description }) : null, ...(action.fields ?? []).map((field) => renderField(field, current)), el("div", { class: "pg-actions" }, button(action.label, () => {
-        const unfilled = missingField(action, current);
+      return button(action.label, () => {
+        const unfilled = missingField(action, values);
         if (unfilled) {
           error = "Fill in “" + unfilled.label + "” first.";
           render();
           return;
         }
-        run("act", { action: buildAction(action, current) }).then((ok) => {
+        run("act", { action: buildAction(action, values) }).then((ok) => {
           if (ok)
             actionValues.delete(key);
         });
-      }, { primary: Boolean(action.primary), disabled: Boolean(blocked), title: blocked ? "Choose " + blocked.label.toLowerCase() + " first" : undefined }))));
+      }, { primary: Boolean(action.primary), disabled: Boolean(blocked), title: blocked ? "Choose " + blocked.label.toLowerCase() + " first" : action.description });
+    };
+    const simple = [];
+    for (const action of game.actions) {
+      const key = game.sessionId + ":" + String(game.view.turnNumber) + ":" + game.view.phase + ":" + action.type + ":" + JSON.stringify(action.preset ?? {});
+      if (!action.fields?.length) {
+        simple.push(action);
+        continue;
+      }
+      let values = actionValues.get(key);
+      if (!values) {
+        values = {};
+        actionValues.set(key, values);
+      }
+      section.append(el("div", { class: "pg-action" }, action.description ? el("p", { class: "pg-muted", text: action.description }) : null, ...(action.fields ?? []).map((field) => renderField(field, values)), el("div", { class: "pg-actions" }, actionButton(action, values, key))));
+    }
+    if (simple.length) {
+      const notes = simple.filter((action) => action.description);
+      section.append(el("div", { class: "pg-action" }, el("div", { class: "pg-actions first" }, ...simple.map((action) => actionButton(action, {}, ""))), notes.length ? el("ul", { class: "pg-notes" }, ...notes.map((action) => el("li", {}, simple.length > 1 ? el("b", { text: action.label + ": " }) : null, action.description ?? ""))) : null));
     }
     return section;
   }
   function renderScoreboard(view) {
-    const current = view.players.find((player) => player.id === view.currentPlayerId);
-    const next = view.players.find((player) => player.id === view.nextPlayerId);
-    return el("section", { class: "pg-section", "aria-live": "polite" }, el("div", { class: "pg-kicker", text: view.gameName + " · Turn " + String(view.turnNumber) + " · " + view.phaseLabel }), el("p", { class: "pg-headline", text: view.headline }), view.detail ? el("p", { class: "pg-detail", text: view.detail }) : null, view.status === "active" ? el("div", { class: "pg-turn" }, el("span", {}, "Now: ", el("b", { text: current?.name ?? "—" })), el("span", {}, "Next up: ", el("b", { text: next?.name ?? "—" }))) : null, view.status === "active" ? renderDirectionToggle(view) : null);
+    const nameOf = (id) => view.players.find((player) => player.id === id)?.name ?? "—";
+    const turnRow = view.roles?.length ? el("div", { class: "pg-turn" }, ...view.roles.map((role) => el("span", {}, role.label + ": ", el("b", { text: nameOf(role.playerId) })))) : el("div", { class: "pg-turn" }, el("span", {}, "Now: ", el("b", { text: nameOf(view.currentPlayerId) })), el("span", {}, "Next up: ", el("b", { text: nameOf(view.nextPlayerId) })));
+    return el("section", { class: "pg-section", "aria-live": "polite" }, el("div", { class: "pg-kicker", text: view.gameName + " · " + (view.turnNoun ?? "Turn") + " " + String(view.turnNumber) + " · " + view.phaseLabel }), el("p", { class: "pg-headline", text: view.headline }), view.detail ? el("p", { class: "pg-detail", text: view.detail }) : null, view.status === "active" ? turnRow : null, view.status === "active" && view.direction ? renderDirectionToggle(view) : null);
   }
   function renderDirectionToggle(view) {
     const reversed = el("input", { type: "checkbox", checked: view.direction === "reversed", disabled: busy });
@@ -622,7 +651,7 @@ function setup(ctx) {
   function renderPlayers(view) {
     const list = el("ul", { class: "pg-players" });
     for (const player of view.players) {
-      list.append(el("li", { class: "pg-player" + (player.current ? " current" : "") + (player.active ? "" : " out") }, el("span", { text: player.name }), player.current ? el("span", { class: "pg-badge turn", text: "Turn" }) : null, player.next ? el("span", { class: "pg-badge next", text: "Next" }) : null, ...player.badges.map((badge) => el("span", { class: "pg-badge", text: badge }))));
+      list.append(el("li", { class: "pg-player" + (player.current ? " current" : "") + (player.active ? "" : " out") }, el("span", { text: player.name }), player.current && !view.roles ? el("span", { class: "pg-badge turn", text: "Turn" }) : null, player.next && !view.roles ? el("span", { class: "pg-badge next", text: "Next" }) : null, ...player.badges.map((badge) => el("span", { class: "pg-badge", text: badge }))));
     }
     return el("section", { class: "pg-section" }, el("h3", { text: "Players" }), list);
   }
@@ -672,7 +701,7 @@ function setup(ctx) {
     if (destroyed)
       return;
     const view = state?.game?.view;
-    const subtitle = !chatId ? "No chat open" : view ? view.gameName + " · turn " + String(view.turnNumber) : "No game in this chat";
+    const subtitle = !chatId ? "No chat open" : view ? view.gameName + " · " + (view.turnNoun ?? "Turn").toLowerCase() + " " + String(view.turnNumber) : "No game in this chat";
     const children = [
       el("header", { class: "pg-header" }, el("div", {}, el("h2", { text: "Party Games" }), el("p", { class: "pg-muted", text: subtitle }))),
       error ? notice(error, "error") : null,

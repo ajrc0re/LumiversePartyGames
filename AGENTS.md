@@ -2,7 +2,7 @@
 
 ## Project
 
-Lumiverse Party Games is a TypeScript Spindle extension with a browser frontend and a Bun backend. It runs party games (Kings Cup first; Never Have I Ever and Truth or Dare next) inside a Lumiverse chat. Read `PLAN.md` before changing behavior. When a Lumiverse checkout is available, its `developer-docs/` folder is the primary API reference; the `lumiverse-spindle-types` declarations are the source of truth for signatures.
+Lumiverse Party Games is a TypeScript Spindle extension with a browser frontend and a Bun backend. It runs party games (Kings Cup and Truth or Dare; Never Have I Ever next) inside a Lumiverse chat. Read `PLAN.md` before changing behavior. When a Lumiverse checkout is available, its `developer-docs/` folder is the primary API reference; the `lumiverse-spindle-types` declarations are the source of truth for signatures.
 
 ## The rule that shapes everything
 
@@ -13,6 +13,7 @@ Lumiverse Party Games is a TypeScript Spindle extension with a browser frontend 
 - `src/types.ts`: contracts shared by engine, backend, and frontend. No Spindle or DOM imports.
 - `src/engine/`: pure, deterministic core (players, turn rotation, phase checks, decks, RNG, session anchoring). No Spindle imports.
 - `src/games/`: one module per game implementing `GameDefinition`. Register new games in `src/engine/registry.ts`.
+- `src/frontend-options.ts`: per-game setup panels. `src/dom.ts`: the DOM helper.
 - `src/backend/`: Spindle-facing services (storage, prompt injection, requests). Keep Spindle calls behind the small interfaces there so tests can fake them.
 - `src/backend.ts`, `src/frontend.ts`: entry points. Keep them thin.
 - `tests/`: Bun tests. `tests/helpers.ts` has game-playing helpers.
@@ -38,6 +39,7 @@ git diff --check
 - `apply` is pure: clone first (`cloneState`), never mutate the input, and throw `IllegalActionError` with a readable message for anything not legal in the current phase. Never apply an illegal action partially or silently.
 - All randomness goes through the injected `Rng`. Shuffle decks and pools once in `setup`; drawing takes the next item, so replays and rollbacks deal the same cards.
 - State is never stored on its own. A session stores the setup state plus anchored events; current state is replayed from them (`src/engine/session.ts`). Keep it that way so swipes and deletes roll state back naturally.
+- Actions any player can take in any game (such as `set_direction`) are table actions in `src/engine/core.ts`, applied through `applyAction`; games do not handle them.
 - Prompt blocks state facts only and end with the shared standing instruction. Update the snapshot tests when wording changes on purpose.
 
 ## Spindle compatibility
